@@ -1,0 +1,14 @@
+{
+  "name": "usequery",
+  "module": "test.ts",
+  "type": "module",
+  "scripts": {
+    "build": "bun build index.ts --outdir dist --target bun"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
