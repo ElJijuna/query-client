@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "usequery",
+      "name": "client-query",
       "devDependencies": {
         "@types/bun": "latest",
       },

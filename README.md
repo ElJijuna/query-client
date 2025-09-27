@@ -1,4 +1,4 @@
-# usequery
+# client-query
 
 To install dependencies:
 

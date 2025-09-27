@@ -1,5 +1,5 @@
 {
-  "name": "usequery",
+  "name": "client-query",
   "module": "test.ts",
   "type": "module",
   "scripts": {
