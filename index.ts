@@ -1,1 +1,1 @@
-export * from './src/queryClient';
+export * from './src/query-client';

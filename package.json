@@ -1,14 +1,26 @@
 {
-  "name": "client-query",
-  "module": "test.ts",
+  "name": "query-client",
   "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "author": "Ivan <pilmee@gmail.com>",
+  "license": "MIT",
   "scripts": {
-    "build": "bun build index.ts --outdir dist --target bun"
+    "build": "bun build index.ts --outdir dist --target bun",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.4",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "ssignal": "^1.2.0"
   }
 }

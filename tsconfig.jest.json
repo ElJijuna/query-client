@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs", // Override module setting for Jest
+    "verbatimModuleSyntax": false, // Optional: Disable for tests if needed
+    "target": "es2018"
+  }
+}
