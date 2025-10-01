@@ -1,7 +1,10 @@
 {
   "name": "query-client",
-  "module": "test.ts",
   "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "author": "Ivan <pilmee@gmail.com>",
+  "license": "MIT",
   "scripts": {
     "build": "bun build index.ts --outdir dist --target bun",
     "test": "jest",
@@ -16,5 +19,8 @@
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "ssignal": "^1.2.0"
   }
 }

@@ -6,7 +6,7 @@ export class QueryClientBaseResponse<T = unknown, E = null | Error> {
     public isSuccess: boolean,
     public isError: boolean,
     public error: E,
-  ) {}
+  ) { }
 }
 
 export class QueryClientSuccessResponse<T = unknown> extends QueryClientBaseResponse<T, null> {

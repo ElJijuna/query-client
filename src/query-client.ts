@@ -1,7 +1,7 @@
-import { QueryClientErrorResponse, QueryClientSuccessResponse } from './query-client-response';
+import SSignal from 'ssignal';
+import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
 import type { QueryFn } from './query-fn';
 import { QueryItem } from './query-item';
-
 
 export interface QueryClientConfig {
   retry?: number;
@@ -15,7 +15,7 @@ export interface QueryConfig<T = unknown> extends QueryClientConfig {
 
 export class QueryClient {
   private static instance: QueryClient;
-  private queries = new Map();
+  private queries = new SSignal(new Map<string, QueryItem>());
   private config: QueryClientConfig;
 
   constructor() {
@@ -26,18 +26,18 @@ export class QueryClient {
     if (!QueryClient.instance) {
       QueryClient.instance = new QueryClient();
     }
-  
+
     return QueryClient.instance;
   }
 
-  private isStored<T =unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>): boolean {
+  private isStored<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>): boolean {
     const key = QueryClient.getQueryKey(queryKey);
 
-    return this.queries.has(key);
+    return this.queries.value.has(key);
   }
 
   clear(): void {
-    this.queries = new Map();
+    this.queries.value.clear();
   }
 
   setConfig(config: QueryClientConfig): void {
@@ -47,25 +47,25 @@ export class QueryClient {
   setQueryData<T = unknown>({ queryKey, data, queryFn }: { queryKey: string[], data: T, queryFn: QueryFn<T> }): void {
     const key = QueryClient.getQueryKey(queryKey);
 
-    this.queries.set(key, new QueryItem(data, queryFn));
+    this.queries.value.set(key, new QueryItem(data, queryFn));
   }
 
   updateQuery<T = unknown>(queryKey: string[], data: QueryItem<T>, queryFn?: QueryFn<T>): void {
     const key = QueryClient.getQueryKey(queryKey);
 
-    this.queries.set(key, data);
+    this.queries.value.set(key, data);
   }
 
   getQueryData<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>): QueryItem<T> {
     const key = QueryClient.getQueryKey(queryKey);
 
-    return this.queries.get(key);
+    return this.queries.value.get(key) as QueryItem<T>;
   }
 
   removeQueries<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>) {
     const key = QueryClient.getQueryKey(queryKey);
 
-    this.queries.delete(key);
+    this.queries.value.delete(key);
   }
 
   async refetchQueries<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>) {
@@ -92,12 +92,12 @@ export class QueryClient {
   async fetchQuery<T = unknown, E = unknown | Error>({ queryFn, queryKey }: QueryConfig<T>) {
     if (this.isStored({ queryKey })) {
       const data = this.getQueryData({ queryKey });
-      
+
       if (data.isInvalidated) {
         return this.refetchQueries({ queryKey });
       }
 
-      return data;
+      return new QueryClientSuccessFromCacheResponse(data);;
     }
 
     try {
@@ -107,7 +107,7 @@ export class QueryClient {
       this.setQueryData({ queryKey, data, queryFn });
       const result = this.getQueryData({ queryKey });
 
-      return result;
+      return new QueryClientSuccessResponse(result);
     } catch (error) {
       throw new QueryClientErrorResponse({
         error,
@@ -120,6 +120,10 @@ export class QueryClient {
   }
 
   public getQueue() {
-    return this.queries;
+    return this.queries.value;
+  }
+
+  public subscribe(callback: (value: Map<string, QueryItem<unknown>>) => () => void) {
+    return this.queries.subscribe(callback)
   }
 }

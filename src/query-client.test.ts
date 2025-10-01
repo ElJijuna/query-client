@@ -18,8 +18,10 @@ describe('QueryClient Singleton', () => {
   it('should get queue count', async () => {
     const client = QueryClient.getInstance();
     const queryFn = jest.fn().mockResolvedValue('fetched data');
+    const suscriptor = jest.fn();
     const queryKey = ['test-query'];
 
+    client.subscribe(suscriptor);
     await client.fetchQuery({ queryFn, queryKey });
 
     expect(client.getQueue().size).toBe(1);
@@ -42,6 +44,8 @@ describe('QueryClient Singleton', () => {
     expect(client.getQueryData({ queryKey }).data).toBe('refetched data');
     expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
     expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
+
+    expect(suscriptor).toHaveBeenCalledTimes(2);
   });
 
   it('should invalidate data', async () => {

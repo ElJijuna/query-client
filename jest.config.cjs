@@ -3,8 +3,11 @@ module.exports = {
   testEnvironment: 'node',
   transform: {
     '^.+\\.ts$': ['ts-jest', {
-      tsconfig: 'tsconfig.jest.json'
+      tsconfig: 'tsconfig.jest.json',
     }],
+  },
+  moduleNameMapper: {
+    '^ssignal$': '<rootDir>/node_modules/ssignal/lib/ssignal.cjs.js',
   },
   coverageReporters: ['clover', 'json', 'lcov'],
   reporters: [

@@ -14,7 +14,7 @@ describe('QueryItem', () => {
 
     expect(queryItem.data).toBe('fetched data');
     expect(queryItem.dataUpdatedAt).toBeUndefined();
-    
+
     queryItem.updateData('fetched data 2');
     expect(queryItem.data).toBe('fetched data 2');
     expect(queryItem.dataUpdatedAt).toBeDefined();
@@ -31,10 +31,10 @@ describe('QueryItem', () => {
     expect(queryItem.errorUpdateCount).toBe(2);
   });
 
-    it('Should execute invalidate', () => {
+  it('Should execute invalidate', () => {
     const queryFn = jest.fn();
     const queryItem = new QueryItem('fetched data', queryFn);
-      
+
     expect(queryItem.isInvalidated).toBe(false);
 
     queryItem.invalidate();
