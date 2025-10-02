@@ -12,7 +12,7 @@ describe('QueryClient Singleton', () => {
     const client = QueryClient.getInstance();
     client.setConfig({ retry: 3 });
 
-    expect((client as any).config).toEqual({ retry: 3 });
+    expect((client as any).config).toEqual(expect.objectContaining({ retry: 3, staleTime: 60000 }));
   });
 
   it('should get queue count', async () => {
@@ -122,8 +122,7 @@ describe('QueryClient Singleton', () => {
   });
 
   it('should return error message', async () => {
-    const client = QueryClient.getInstance();
-    client.clear();
+    const client = QueryClient.getInstance().setConfig({ retry: 0 }).clear();
     const queryFn = jest.fn().mockRejectedValue('error: custom error');
     const queryKey = ['test-query'];
 

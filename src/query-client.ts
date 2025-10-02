@@ -5,6 +5,7 @@ import { QueryItem } from './query-item';
 
 export interface QueryClientConfig {
   retry?: number;
+  retryDelay?: (attempt: number) => number;
   staleTime?: number;
 }
 
@@ -16,10 +17,14 @@ export interface QueryConfig<T = unknown> extends QueryClientConfig {
 export class QueryClient {
   private static instance: QueryClient;
   private queries = new SSignal(new Map<string, QueryItem>());
-  private config: QueryClientConfig;
+  private config: Required<QueryClientConfig>;
 
   constructor() {
-    this.config = {};
+    this.config = {
+      staleTime: 1000 * 60,
+      retry: 3,
+      retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 30000)
+    };
   }
 
   public static getInstance(): QueryClient {
@@ -36,12 +41,16 @@ export class QueryClient {
     return this.queries.value.has(key);
   }
 
-  clear(): void {
+  clear(): QueryClient {
     this.queries.value.clear();
+
+    return this;
   }
 
-  setConfig(config: QueryClientConfig): void {
+  setConfig(config: QueryClientConfig): QueryClient {
     this.config = { ...this.config, ...config };
+
+    return this;
   }
 
   setQueryData<T = unknown>({ queryKey, data, queryFn }: { queryKey: string[], data: T, queryFn: QueryFn<T> }): void {
@@ -89,29 +98,44 @@ export class QueryClient {
     this.updateQuery<T>(queryKey, data);
   }
 
-  async fetchQuery<T = unknown, E = unknown | Error>({ queryFn, queryKey }: QueryConfig<T>) {
+  async fetchQuery<T = unknown, E = unknown | Error>({ queryFn, queryKey, retry = this.config.retry, retryDelay = this.config.retryDelay }: QueryConfig<T>) {
     if (this.isStored({ queryKey })) {
       const data = this.getQueryData({ queryKey });
 
-      if (data.isInvalidated) {
+      if (data && data.isInvalidated) {
         return this.refetchQueries({ queryKey });
       }
 
-      return new QueryClientSuccessFromCacheResponse(data);;
+      if (data) {
+        return new QueryClientSuccessFromCacheResponse(data);
+      }
     }
 
-    try {
-      const { signal } = new AbortController();
-      const data = await queryFn({ signal });
+    let attempts = 0;
 
-      this.setQueryData({ queryKey, data, queryFn });
-      const result = this.getQueryData({ queryKey });
+    while (attempts <= retry) {
+      try {
+        const { signal } = new AbortController();
+        const data = await queryFn({ signal });
 
-      return new QueryClientSuccessResponse(result);
-    } catch (error) {
-      throw new QueryClientErrorResponse({
-        error,
-      });
+        this.setQueryData({ queryKey, data, queryFn });
+        const result = this.getQueryData({ queryKey });
+
+        if (result) {
+          return new QueryClientSuccessResponse(result);
+        }
+
+        throw new Error('Failed to retrieve query data after fetch.');
+      } catch (error) {
+        attempts++;
+        if (attempts > retry) {
+          throw new QueryClientErrorResponse({
+            error,
+          });
+        }
+
+        await waitFor(retryDelay(attempts));
+      }
     }
   }
 
@@ -127,3 +151,5 @@ export class QueryClient {
     return this.queries.subscribe(callback)
   }
 }
+
+const waitFor = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
