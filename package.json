@@ -1,12 +1,21 @@
 {
+  "version": "1.0.0",
   "name": "query-client",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "author": "Ivan <pilmee@gmail.com>",
   "license": "MIT",
+  "files": [
+    "lib",
+    "README.md",
+    "LICENSE",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md"
+  ],
   "scripts": {
-    "build": "bun build index.ts --outdir dist --target bun",
+    "build": "vite build",
     "test": "jest",
     "test:coverage": "jest --coverage"
   },
@@ -15,12 +24,34 @@
     "@types/jest": "^30.0.0",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.4",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vite-plugin-dts": "^4.5.4"
   },
   "peerDependencies": {
     "typescript": "^5.9.2"
   },
   "dependencies": {
     "ssignal": "^1.2.0"
+  },
+  "exports": {
+    "./query-client": {
+      "types": "./lib/query-client.d.ts",
+      "import": "./lib/query-client.es.js",
+      "require": "./lib/query-client.cjs.js"
+    },
+    "./query-item": {
+      "types": "./lib/query-item.d.ts",
+      "import": "./lib/query-item.es.js",
+      "require": "./lib/query-item.cjs.js"
+    },
+    "./query-fn": {
+      "types": "./lib/query-fn.d.ts",
+      "import": "./lib/query-fn.es.js",
+      "require": "./lib/query-fn.cjs.js"
+    },
+    "./query-client-response": {
+      "types": "./lib/query-client-response.d.ts"
+    }
   }
 }
