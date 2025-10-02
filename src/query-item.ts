@@ -3,7 +3,7 @@ import type { QueryFn } from './query-fn';
 export class QueryItem<T = unknown> {
   public data: T;
   public dataCreatedAt: number = Date.now();
-  public dataUpdatedAt?: number;
+  public dataUpdatedAt: number;
   public errorUpdatedAt?: number;
   public errorUpdateCount: number = 0;
   public isInvalidated: boolean = false;
@@ -11,6 +11,7 @@ export class QueryItem<T = unknown> {
 
   constructor(data: T, queryFn: QueryFn<T>) {
     this.data = data;
+    this.dataUpdatedAt = Date.now();
     this.queryFn = queryFn;
   }
 

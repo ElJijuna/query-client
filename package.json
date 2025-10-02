@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "vite build",
-    "test": "jest",
+    "test": "jest --detectOpenHandles",
     "test:coverage": "jest --coverage"
   },
   "devDependencies": {

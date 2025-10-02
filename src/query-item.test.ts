@@ -13,7 +13,7 @@ describe('QueryItem', () => {
     const queryItem = new QueryItem<string>('fetched data', queryFn);
 
     expect(queryItem.data).toBe('fetched data');
-    expect(queryItem.dataUpdatedAt).toBeUndefined();
+    expect(queryItem.dataUpdatedAt).toBeDefined();
 
     queryItem.updateData('fetched data 2');
     expect(queryItem.data).toBe('fetched data 2');
