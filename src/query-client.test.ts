@@ -31,7 +31,9 @@ describe('QueryClient Singleton', () => {
     (QueryClient as any).instance = undefined;
     queryClient = QueryClient.getInstance();
     queryClient.clear();
-    queryClient.setConfig({ retry: 0, staleTime: 0, gcTime: 5000 });
+    queryClient.setConfig({
+      retry: 0, staleTime: 0, gcTime: 5000,
+    });
   });
 
   afterEach(() => {
@@ -216,16 +218,17 @@ describe('QueryClient Singleton', () => {
     it('should not remove a query that is still active', async () => {
       jest.useFakeTimers();
       const queryKey = ['active-query'];
+      const staleTime = 2000;
       const gcTime = 1000;
       queryClient.setConfig({ gcTime });
       mockQueryFn.mockResolvedValue('test data');
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
 
       jest.advanceTimersByTime(gcTime - 1);
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
 
       jest.advanceTimersByTime(gcTime);
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
