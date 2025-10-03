@@ -1,6 +1,46 @@
 import { QueryClient } from './query-client';
+import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
+
+jest.mock('ssignal', () => {
+  const mockSignal = {
+    value: new Map(),
+    subscribe: jest.fn(),
+    update: (newValue: any) => mockSignal.value = newValue,
+  };
+
+  return {
+    __esModule: true,
+    default: jest.fn(() => mockSignal),
+  };
+});
+
+jest.mock('./query-client', () => {
+  const originalModule = jest.requireActual('./query-client');
+  return {
+    ...originalModule,
+    waitFor: jest.fn(() => Promise.resolve()),
+  };
+});
 
 describe('QueryClient Singleton', () => {
+  let queryClient: QueryClient;
+  const mockQueryFn = jest.fn();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (QueryClient as any).instance = undefined;
+    queryClient = QueryClient.getInstance();
+    queryClient.clear();
+    queryClient.setConfig({
+      retry: 0, staleTime: 0, gcTime: 5000,
+    });
+  });
+
+  afterEach(() => {
+    queryClient.destroy();
+    jest.useRealTimers();
+  });
+
   it('should return the same instance', () => {
     const instance1 = QueryClient.getInstance();
     const instance2 = QueryClient.getInstance();
@@ -8,132 +48,190 @@ describe('QueryClient Singleton', () => {
     expect(instance1).toBe(instance2);
   });
 
-  it('should allow setting and getting config', () => {
-    const client = QueryClient.getInstance();
-    client.setConfig({ retry: 3 });
+  it('should allow setting and overriding config', () => {
+    const customConfig = { retry: 5, staleTime: 30000 };
+    queryClient.setConfig(customConfig);
 
-    expect((client as any).config).toEqual({ retry: 3 });
+    expect((queryClient as any).config).toEqual(expect.objectContaining(customConfig));
   });
 
-  it('should get queue count', async () => {
-    const client = QueryClient.getInstance();
-    const queryFn = jest.fn().mockResolvedValue('fetched data');
-    const suscriptor = jest.fn();
-    const queryKey = ['test-query'];
+  describe('fetchQuery', () => {
+    it('should fetch data and return a success response on first request', async () => {
+      const queryKey = ['test-query'];
+      const fetchedData = 'fetched data';
+      mockQueryFn.mockResolvedValue(fetchedData);
 
-    client.subscribe(suscriptor);
-    await client.fetchQuery({ queryFn, queryKey });
+      const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      const storedQuery = queryClient.getQueryData({ queryKey });
 
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data');
-    expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
-    expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
+      expect(mockQueryFn).toHaveBeenCalledTimes(1);
+      expect(response).toBeInstanceOf(QueryClientSuccessResponse);
+      expect(response.data).toBe(fetchedData);
+      expect(storedQuery.data).toBe(fetchedData);
+    });
 
-    await client.fetchQuery({ queryFn, queryKey });
+    it('should return cached data if query is not stale', async () => {
+      const queryKey = ['cached-query'];
+      const cachedData = 'cached data';
+      mockQueryFn.mockResolvedValueOnce(cachedData);
 
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data');
-    expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
-    expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 1000 });
+      mockQueryFn.mockClear();
 
-    queryFn.mockResolvedValue('refetched data');
+      const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
-    await client.refetchQueries({ queryKey });
+      expect(mockQueryFn).not.toHaveBeenCalled();
+      expect(response).toBeInstanceOf(QueryClientSuccessFromCacheResponse);
+      expect(response.data).toBe(cachedData);
+    });
 
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('refetched data');
-    expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
-    expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
+    it('should refetch a query if it is stale', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['stale-test'];
+      const staleTime = 500;
+      queryClient.setConfig({ staleTime });
+      mockQueryFn.mockResolvedValueOnce('initial data');
 
-    expect(suscriptor).toHaveBeenCalledTimes(2);
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      jest.advanceTimersByTime(staleTime + 1);
+
+      mockQueryFn.mockResolvedValueOnce('refetched data');
+      const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      expect(mockQueryFn).toHaveBeenCalledTimes(2);
+      expect(response.data).toBe('refetched data');
+    });
+
+    it('should throw an error on fetch failure without retries', async () => {
+      const queryKey = ['error-query'];
+      const mockError = new Error('Custom error');
+      mockQueryFn.mockRejectedValue(mockError);
+
+      queryClient.setConfig({ retry: 0 });
+
+      await expect(queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey }))
+        .rejects.toBeInstanceOf(QueryClientErrorResponse);
+
+      expect(mockQueryFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw error after max retries are exceeded', async () => {
+      const queryKey = ['max-retry-query'];
+      const mockError = new Error('Final failure');
+      const maxRetries = 2;
+      queryClient.setConfig({ retry: maxRetries, retryDelay: () => 10 });
+
+      jest.useFakeTimers();
+
+      mockQueryFn.mockRejectedValue(mockError);
+
+      const fetchPromise = queryClient.fetchQuery({ queryKey, queryFn: mockQueryFn });
+
+      for (let i = 0; i <= 1 + maxRetries; i++) {
+        jest.advanceTimersByTime(10);
+
+        await Promise.resolve();
+      }
+
+      await expect(fetchPromise).rejects.toBeInstanceOf(QueryClientErrorResponse);
+      expect(mockQueryFn).toHaveBeenCalledTimes(maxRetries + 1);
+    });
+
+    it('should fetch successfully after retrying failed requests', async () => {
+      const queryKey = ['retry-query'];
+      const mockError = new Error('Network error');
+      const maxRetries = 2;
+      queryClient.setConfig({ retry: maxRetries, retryDelay: () => 10 });
+
+      jest.useFakeTimers();
+
+      mockQueryFn.mockRejectedValueOnce(mockError);
+      mockQueryFn.mockRejectedValueOnce(mockError);
+      mockQueryFn.mockResolvedValueOnce('success after retry');
+
+      const fetchPromise = queryClient.fetchQuery({ queryKey, queryFn: mockQueryFn });
+
+      for (let i = 0; i <= 1 + maxRetries; i++) {
+        jest.advanceTimersByTime(10);
+        await Promise.resolve();
+      }
+
+      await expect(fetchPromise).resolves.toBeInstanceOf(QueryClientSuccessResponse);
+      expect(mockQueryFn).toHaveBeenCalledTimes(maxRetries + 1);
+    });
   });
 
-  it('should invalidate data', async () => {
-    const client = QueryClient.getInstance();
-    client.clear();
-    const queryFn = jest.fn().mockResolvedValue('fetched data');
-    const queryKey = ['test-query'];
+  describe('refetchQueries and invalidateQueryData', () => {
+    it('should refetch a query and update data when refetchQueries is called', async () => {
+      const queryKey = ['refetch-query'];
+      mockQueryFn.mockResolvedValueOnce('initial data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
-    await client.fetchQuery({ queryFn, queryKey });
+      mockQueryFn.mockResolvedValueOnce('refetched data');
+      const response = await queryClient.refetchQueries({ queryKey });
 
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data');
-    expect(client.getQueryData({ queryKey }).isInvalidated).toBe(false);
+      const storedQuery = queryClient.getQueryData({ queryKey });
+      expect(mockQueryFn).toHaveBeenCalledTimes(2);
+      expect(response.data).toBe('refetched data');
+      expect(storedQuery.data).toBe('refetched data');
+    });
 
-    client.invalidateQueryData({ queryKey });
+    it('should throw an error when refetching a non-existent key', async () => {
+      const nonExistentKey = ['non-existent'];
+      await expect(queryClient.refetchQueries({ queryKey: nonExistentKey })).rejects.toThrow('No query in queries.');
+    });
 
-    expect(client.getQueryData({ queryKey }).data).toBeUndefined();
-    expect(client.getQueryData({ queryKey }).isInvalidated).toBe(true);
+    it('should invalidate query and re-execute on next fetch', async () => {
+      const queryKey = ['invalidate-refetch-query'];
+      mockQueryFn.mockResolvedValueOnce('initial data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      queryClient.invalidateQueryData({ queryKey });
+      expect(queryClient.getQueryData({ queryKey }).isInvalidated).toBe(true);
+
+      mockQueryFn.mockResolvedValueOnce('fetched data 2');
+      const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const storedQuery = queryClient.getQueryData({ queryKey });
+      expect(response.data).toBe('fetched data 2');
+      expect(storedQuery.isInvalidated).toBe(false);
+      expect(mockQueryFn).toHaveBeenCalledTimes(2);
+    });
   });
 
-  it('should throw error when call non-existent key valud', async () => {
-    const client = QueryClient.getInstance();
-    client.clear();
+  describe('Garbage Collection', () => {
+    it('should remove queries after gcTime has passed', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['gc-query'];
+      const gcTime = 1000;
+      queryClient.setConfig({ gcTime }).clear();
+      mockQueryFn.mockResolvedValue('test data');
 
-    await expect(() => client.refetchQueries({ queryKey: ['random'] })).rejects.toThrow(Error);
-  });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
 
-  it('should remove query from queries', async () => {
-    const queryFn = jest.fn();
-    const client = QueryClient.getInstance();
-    client.clear();
-    const queryKey = ['test-query'];
+      jest.advanceTimersByTime(1 + 30000);
 
-    client.setQueryData({ queryKey, data: 'fetched data', queryFn })
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(false);
+    });
 
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data');
+    it('should not remove a query that is still active', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['active-query'];
+      const staleTime = 2000;
+      const gcTime = 1000;
+      queryClient.setConfig({ gcTime });
+      mockQueryFn.mockResolvedValue('test data');
 
-    client.removeQueries({ queryKey });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
 
-    expect(client.getQueryData({ queryKey })).toBeUndefined();
-  });
+      jest.advanceTimersByTime(gcTime - 1);
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
 
-  it('should invalidate query and re-execute query function when call fetchQUery', async () => {
-    const client = QueryClient.getInstance();
-    const queryFn = jest.fn().mockResolvedValue('fetched data');
-    const queryKey = ['test-query'];
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
 
-    await client.fetchQuery({ queryFn, queryKey });
-
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data');
-    expect(client.getQueryData({ queryKey }).isInvalidated).toBe(false);
-
-    client.invalidateQueryData({ queryKey });
-
-    expect(client.getQueryData({ queryKey }).data).toBeUndefined();
-    expect(client.getQueryData({ queryKey }).isInvalidated).toBe(true);
-
-    queryFn.mockResolvedValue('fetched data 2');
-    await client.fetchQuery({ queryFn, queryKey });
-
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('fetched data 2');
-    expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
-    expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
-
-    queryFn.mockResolvedValue('refetched data');
-
-    await client.refetchQueries({ queryKey });
-
-    expect(client.getQueue().size).toBe(1);
-    expect(client.getQueryData({ queryKey }).data).toBe('refetched data');
-    expect(client.getQueryData({ queryKey }).dataCreatedAt).toBeDefined();
-    expect(client.getQueryData({ queryKey }).dataUpdatedAt).toBeUndefined();
-  });
-
-  it('should return error message', async () => {
-    const client = QueryClient.getInstance();
-    client.clear();
-    const queryFn = jest.fn().mockRejectedValue('error: custom error');
-    const queryKey = ['test-query'];
-
-    await expect(client.fetchQuery({ queryFn, queryKey })).rejects.toEqual({
-      data: undefined,
-      error: 'error: custom error',
-      isCached: false,
-      isError: true,
-      isPending: false,
-      isSuccess: false,
+      jest.advanceTimersByTime(gcTime);
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
     });
   });
 });

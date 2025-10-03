@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.2.0",
   "name": "query-client",
   "type": "module",
   "main": "lib/index.js",
@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "vite build",
-    "test": "jest",
+    "test": "jest --detectOpenHandles",
     "test:coverage": "jest --coverage"
   },
   "devDependencies": {
@@ -38,17 +38,23 @@
     "./query-client": {
       "types": "./lib/query-client.d.ts",
       "import": "./lib/query-client.es.js",
-      "require": "./lib/query-client.cjs.js"
+      "require": "./lib/query-client.cjs.js",
+      "default": "./lib/query-client.cjs.js"
     },
     "./query-item": {
       "types": "./lib/query-item.d.ts",
       "import": "./lib/query-item.es.js",
-      "require": "./lib/query-item.cjs.js"
+      "require": "./lib/query-item.cjs.js",
+      "default": "./lib/query-item.cjs.js"
     },
     "./query-fn": {
       "types": "./lib/query-fn.d.ts",
       "import": "./lib/query-fn.es.js",
-      "require": "./lib/query-fn.cjs.js"
+      "require": "./lib/query-fn.cjs.js",
+      "default": "./lib/query-fn.cjs.js"
+    },
+    "./query-client-config": {
+      "types": "./lib/query-client-config.d.ts"
     },
     "./query-client-response": {
       "types": "./lib/query-client-response.d.ts"
