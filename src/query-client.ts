@@ -3,6 +3,8 @@ import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryCli
 import type { QueryFn } from './query-fn';
 import { QueryItem, type QueryItemConfig, type QueryItemWithData } from './query-item';
 
+const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
+
 export const DEFAULT_STALE_TIME = 1000 * 60;
 export const DEFAULT_RETRY = 3;
 export const DEFAULT_GC_TIME = 1000 * 60 * 5;
@@ -14,7 +16,6 @@ export interface QueryConfig<T = unknown> extends QueryItemConfig {
 }
 
 export class QueryClient {
-  private static instance: QueryClient;
   private queries = new SSignal(new Map<string, QueryItem>());
   private config: Required<Omit<QueryItemConfig, 'queryKey' | 'queryFn'>>;
   private gcInterval: number | undefined;
@@ -206,11 +207,11 @@ export class QueryClient {
   }
 
   static getInstance(): QueryClient {
-    if (!QueryClient.instance) {
-      QueryClient.instance = new QueryClient();
+    if (!((globalThis as any)[QUERY_CLIENT_INSTANCE])) {
+      (globalThis as any)[QUERY_CLIENT_INSTANCE] = new QueryClient();
     }
 
-    return QueryClient.instance;
+    return (globalThis as any)[QUERY_CLIENT_INSTANCE];
   }
 }
 
