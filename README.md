@@ -1,11 +1,16 @@
 # ⚡️ QueryClient
 
-[![npm version](https://img.shields.io/npm/v/client-query.svg)](https://www.npmjs.com/package/client-query)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg)
 ![GitHub issues](https://img.shields.io/github/issues/ElJijuna/client-query.svg)
 ![GitHub stars](https://img.shields.io/github/stars/ElJijuna/client-query.svg)
 ![GitHub forks](https://img.shields.io/github/forks/ElJijuna/client-query.svg)
+[![npm version](https://img.shields.io/npm/v/client-query.svg)](https://www.npmjs.com/package/client-query)
+![npm downloads](https://img.shields.io/npm/dw/client-query)
+![npm downloads](https://img.shields.io/npm/dm/client-query)
+![npm downloads](https://img.shields.io/npm/dt/client-query)
+![npm bundle size](https://img.shields.io/bundlephobia/minzip/client-query)
+![npm](https://img.shields.io/npm/dt/client-query)
 
 Una ligera y poderosa biblioteca en TypeScript para la gestión de datos asíncronos y el almacenamiento en caché. `QueryClient` simplifica la lógica de manejo de peticiones, reintentos, cacheo y recolección de basura, permitiendo a los desarrolladores centrarse en la lógica de negocio.
 
