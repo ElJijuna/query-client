@@ -17,12 +17,14 @@
   "scripts": {
     "build": "vite build",
     "test": "jest --detectOpenHandles",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "semantic-release": "semantic-release"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "@types/jest": "^30.0.0",
     "jest": "^30.2.0",
+    "semantic-release": "^24.2.9",
     "ts-jest": "^29.4.4",
     "typescript": "^5.9.2",
     "vite": "^7.1.7",
@@ -59,5 +61,8 @@
     "./query-client-response": {
       "types": "./lib/query-client-response.d.ts"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
