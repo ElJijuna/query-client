@@ -7,6 +7,8 @@ on:
         default: 'npm'
         required: true
         type: string
+  schedule:
+    - cron: '0 6 * * *' # ⏰ Ejecuta todos los días a las 6:00 AM UTC
 env:
   REPORT_NAME: 'query-client'
 jobs:
