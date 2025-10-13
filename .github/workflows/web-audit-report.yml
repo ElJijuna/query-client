@@ -6,7 +6,7 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: ElJijuna/web-audit-action@v1
+      - uses: web-audit-report@v2
         with:
           runtime: npm
           token: ${{ secrets.MONITORING_TOOL_DB }}
