@@ -1,50 +1,12 @@
-name: Web Audit Report
+name: Web Aduti Report
 on:
   workflow_dispatch:
-    inputs:
-      runtime:
-        description: 'Runtime to execute report audit, values: npm | bun | pnpm | yarn'
-        default: 'npm'
-        required: true
-        type: string
-  schedule:
-    - cron: '0 6 * * *' # ⏰ Ejecuta todos los días a las 6:00 AM UTC
-env:
-  REPORT_NAME: 'query-client'
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-    - name: 📥 Clonar el repositorio
-      uses: actions/checkout@v3
-    - name: 🔧 Instalar dependencias con npm ci
-      run: npm ci
-    - name: 🧨 Executing Script...
-      run: curl https://raw.githubusercontent.com/ElJijuna/Bash-Scripts/refs/heads/main/web-audit-report.sh | bash -s ${{ inputs.runtime }} "${{ env.REPORT_NAME }}"
-    - name: 📂 Verify repository content
-      run: ls -l
-    - name: 📦 Save report
-      uses: actions/upload-artifact@v4
-      with:
-        name: audit-report
-        path: ${{ env.REPORT_NAME }}--web-audit.json
-  publish-report:
-    runs-on: ubuntu-latest
-    needs: audit
-    steps:
-    - name: 📥 Cloning
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git clone --depth 1 https://x-access-token:${{ secrets.MONITORING_TOOL_DB }}@github.com/ElJijuna/MonitoringTool-DB.git .
-    - name: 📥 Download artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: audit-report
-    - name: 📂 Verify repository content
-      run: ls -l
-    - name: ✅ Commit & Push
-      run: |
-        git add ${{ env.REPORT_NAME }}--web-audit.json
-        git commit -m "📊 Update report"
-        git push
+      - uses: ElJijuna/web-audit-action@v1
+        with:
+          runtime: npm
+          token: ${{ secrets.MONITORING_TOOL_DB }}
