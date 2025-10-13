@@ -20,7 +20,7 @@ jobs:
     - name: 🔧 Instalar dependencias con npm ci
       run: npm ci
     - name: 🧨 Executing Script...
-      run: curl https://raw.githubusercontent.com/ElJijuna/Bash-Scripts/refs/heads/main/web-audit-report.sh | bash -s ${{ inputs.runtime }} $REPORT_NAME
+      run: curl https://raw.githubusercontent.com/ElJijuna/Bash-Scripts/refs/heads/main/web-audit-report.sh | bash -s ${{ inputs.runtime }} "${{ env.REPORT_NAME }}"
     - name: 📂 Verify repository content
       run: ls -l
     - name: 📦 Save report
