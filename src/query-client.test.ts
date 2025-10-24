@@ -67,7 +67,7 @@ describe('QueryClient Singleton', () => {
       expect(mockQueryFn).toHaveBeenCalledTimes(1);
       expect(response).toBeInstanceOf(QueryClientSuccessResponse);
       expect(response.data).toBe(fetchedData);
-      expect(storedQuery.data).toBe(fetchedData);
+      expect(storedQuery?.data).toBe(fetchedData);
     });
 
     it('should return cached data if query is not stale', async () => {
@@ -169,11 +169,11 @@ describe('QueryClient Singleton', () => {
 
       mockQueryFn.mockResolvedValueOnce('refetched data');
       const response = await queryClient.refetchQueries({ queryKey });
-
       const storedQuery = queryClient.getQueryData({ queryKey });
+
       expect(mockQueryFn).toHaveBeenCalledTimes(2);
       expect(response.data).toBe('refetched data');
-      expect(storedQuery.data).toBe('refetched data');
+      expect(storedQuery?.data).toBe('refetched data');
     });
 
     it('should throw an error when refetching a non-existent key', async () => {
@@ -187,14 +187,14 @@ describe('QueryClient Singleton', () => {
       await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
       queryClient.invalidateQueryData({ queryKey });
-      expect(queryClient.getQueryData({ queryKey }).isInvalidated).toBe(true);
+      expect(queryClient.getQueryData({ queryKey })?.isInvalidated).toBe(true);
 
       mockQueryFn.mockResolvedValueOnce('fetched data 2');
       const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
       const storedQuery = queryClient.getQueryData({ queryKey });
       expect(response.data).toBe('fetched data 2');
-      expect(storedQuery.isInvalidated).toBe(false);
+      expect(storedQuery?.isInvalidated).toBe(false);
       expect(mockQueryFn).toHaveBeenCalledTimes(2);
     });
   });
