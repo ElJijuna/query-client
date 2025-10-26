@@ -1,5 +1,9 @@
 import SSignal from 'ssignal';
-import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
+import {
+  QueryClientErrorResponse,
+  QueryClientSuccessFromCacheResponse,
+  QueryClientSuccessResponse,
+} from './query-client-response';
 import type { QueryFn } from './query-fn';
 import { QueryItem, type QueryItemConfig, type QueryItemWithData } from './query-item';
 import { partialMatchKey } from './utils/utils';
@@ -37,14 +41,17 @@ export class QueryClient {
       clearInterval(this.gcInterval);
     }
 
-    this.gcInterval = setInterval(() => this.runGarbageCollection(), this.config.gcTime) as any satisfies number;
+    this.gcInterval = setInterval(
+      () => this.runGarbageCollection(),
+      this.config.gcTime,
+    ) as any satisfies number;
   }
 
   private runGarbageCollection(): void {
     const now = Date.now();
 
     for (const [key, queryItem] of this.queries.value.entries()) {
-      if (now - queryItem.dataUpdatedAt > this.config.gcTime) {
+      if (now - queryItem.getMetadata().dataUpdatedAt > this.config.gcTime) {
         this.queries.value.delete(key);
       }
     }
@@ -54,24 +61,18 @@ export class QueryClient {
 
   private isStored<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>): boolean {
     const key = QueryClient.getQueryKey(queryKey);
-
     return this.queries.value.has(key);
   }
 
   private isStale<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>): boolean {
     const queryItem = this.getQueryData<T>({ queryKey }) as QueryItem<T>;
-
-    if (!queryItem) {
-      return true;
-    }
-
+    if (!queryItem) return true;
     return queryItem.isStale();
   }
 
   clear(): QueryClient {
     this.queries.value.clear();
     this.startGarbageCollection();
-
     return this;
   }
 
@@ -87,7 +88,12 @@ export class QueryClient {
 
   getJsonQueue<T = unknown>() {
     const queue = Object.entries(Object.fromEntries(this.getQueue<T>()))
-      .map(([queryKey, { data, queryFn, timeoutId, ...config }]) => ({ queryKey, queryKeyOriginal: QueryClient.parseQueryKey(queryKey), data, config }));
+      .map(([queryKey, { data, queryFn, ...rest }]) => ({
+        queryKey,
+        queryKeyOriginal: QueryClient.parseQueryKey(queryKey),
+        data,
+        config: { ...rest },
+      }));
 
     return queue;
   }
@@ -98,15 +104,19 @@ export class QueryClient {
 
   setConfig(config: Omit<QueryItemConfig, 'queryKey' | 'data' | 'queryFn'>): QueryClient {
     this.config = { ...this.config, ...config };
-
     return this;
   }
 
-  setQueryData<T = unknown>({ queryKey, data, queryFn, staleTime }: QueryItemWithData<T>): void {
+  setQueryData<T = unknown>({
+    queryKey,
+    data,
+    queryFn,
+    staleTime,
+  }: QueryItemWithData<T>): void {
     const key = QueryClient.getQueryKey(queryKey);
     const queryItem = new QueryItem<T>(data, { queryFn, staleTime });
 
-    queryItem.timeoutId = setTimeout(() => {
+    queryItem.getMetadata().timeoutId = setTimeout(() => {
       this.removeQueries({ queryKey });
     }, staleTime);
 
@@ -115,11 +125,13 @@ export class QueryClient {
 
   updateQuery<T = unknown>(queryKey: string[], data: QueryItem<T>): void {
     const key = QueryClient.getQueryKey(queryKey);
-
     this.queries.value.set(key, data);
   }
 
-  refreshQueryData<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>, newData: T): void {
+  refreshQueryData<T = unknown>(
+    { queryKey }: Pick<QueryConfig<T>, 'queryKey'>,
+    newData: T,
+  ): void {
     const key = QueryClient.getQueryKey(queryKey);
     const data = this.getQueryData({ queryKey });
 
@@ -128,16 +140,17 @@ export class QueryClient {
     }
   }
 
-  getQueryData<T = unknown>({ queryKey, exact }: Pick<QueryConfig<T>, 'queryKey' | 'exact'>): QueryItem<T> | undefined {
+  getQueryData<T = unknown>({
+    queryKey,
+    exact,
+  }: Pick<QueryConfig<T>, 'queryKey' | 'exact'>): QueryItem<T> | undefined {
     if (exact) {
       const key = QueryClient.getQueryKey(queryKey);
-
       return this.queries.value.get(key) as QueryItem<T>;
     }
-    
+
     for (const [key, queryItem] of this.queries.value.entries()) {
       const parsedKey = QueryClient.parseQueryKey(key);
-
       if (partialMatchKey(queryKey, parsedKey)) {
         return queryItem as QueryItem<T>;
       }
@@ -148,44 +161,54 @@ export class QueryClient {
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
     const key = QueryClient.getQueryKey(queryKey);
-
     this.queries.value.delete(key);
   }
 
-  async refetchQueries<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>): Promise<any> {
+  async refetchQueries<T = unknown>(
+    { queryKey }: Omit<QueryConfig<T>, 'queryFn'>,
+  ): Promise<any> {
     if (!this.isStored({ queryKey })) {
       throw new Error('No query in queries.');
     }
 
     const storedData = this.getQueryData<T>({ queryKey });
+    if (!storedData) throw new Error('No query in queries.');
 
-    if (!storedData) {
-      throw new Error('No query in queries.');
+    if (storedData.getMetadata().timeoutId) {
+      clearTimeout(storedData.getMetadata().timeoutId);
     }
 
-    if (storedData.timeoutId) {
-      clearTimeout(storedData.timeoutId);
-    }
-
-    return this.fetchQuery<T>({ queryKey, queryFn: storedData.queryFn, ignoreCache: true, staleTime: storedData.staleTime, refetch: true });
+    return this.fetchQuery<T>({
+      queryKey,
+      queryFn: storedData.queryFn,
+      ignoreCache: true,
+      staleTime: storedData.getMetadata().staleTime,
+      refetch: true,
+    });
   }
 
-  async invalidateQueryData<T = unknown>({ queryKey, exact }: Omit<QueryConfig<T>, 'queryFn'>): Promise<void> {
+  async invalidateQueryData<T = unknown>(
+    { queryKey, exact }: Omit<QueryConfig<T>, 'queryFn'>,
+  ): Promise<void> {
     const data = this.getQueryData<T>({ queryKey, exact })?.invalidate();
-
-    if (!data) {
-      throw new Error('No query in queries.');
-    }
-  
+    if (!data) throw new Error('No query in queries.');
     this.updateQuery<T>(queryKey, data);
   }
 
-  async fetchQuery<T = unknown, E = unknown | Error>({ queryFn, queryKey, retry = this.config.retry, retryDelay = this.config.retryDelay, ignoreCache = false, staleTime = 0, refetch }: QueryConfig<T>): Promise<any> {
+  async fetchQuery<T = unknown, E = unknown | Error>({
+    queryFn,
+    queryKey,
+    retry = this.config.retry,
+    retryDelay = this.config.retryDelay,
+    ignoreCache = false,
+    staleTime = 0,
+    refetch,
+  }: QueryConfig<T>): Promise<any> {
     const isStored = this.isStored({ queryKey });
     const isStale = this.isStale({ queryKey });
     const storedData = this.getQueryData<T>({ queryKey });
 
-    if (!ignoreCache && isStored && !isStale && storedData && !storedData.isInvalidated) {
+    if (!ignoreCache && isStored && !isStale && storedData && !storedData.getMetadata().isInvalidated) {
       return new QueryClientSuccessFromCacheResponse<T>(storedData);
     }
 
@@ -203,7 +226,6 @@ export class QueryClient {
         }
 
         const result = this.getQueryData<T>({ queryKey });
-
         if (result) {
           return new QueryClientSuccessResponse<T>(result);
         }
@@ -212,31 +234,22 @@ export class QueryClient {
       } catch (error) {
         attempts++;
         if (attempts > retry) {
-          throw new QueryClientErrorResponse({
-            error,
-          });
+          throw new QueryClientErrorResponse({ error });
         }
-
         await waitFor(retryDelay(attempts));
       }
     }
   }
 
-  static getQueryKey = (queryKey: string[]) => {
-    return queryKey.join(':');
-  }
-
-  static parseQueryKey = (queryKey: string) => {
-    return queryKey.split(':');
-  }
+  static getQueryKey = (queryKey: string[]) => queryKey.join(':');
+  static parseQueryKey = (queryKey: string) => queryKey.split(':');
 
   static getInstance(): QueryClient {
-    if (!((globalThis as any)[QUERY_CLIENT_INSTANCE])) {
+    if (!(globalThis as any)[QUERY_CLIENT_INSTANCE]) {
       (globalThis as any)[QUERY_CLIENT_INSTANCE] = new QueryClient();
     }
-
     return (globalThis as any)[QUERY_CLIENT_INSTANCE];
   }
 }
 
-const waitFor = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const waitFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

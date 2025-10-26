@@ -187,14 +187,14 @@ describe('QueryClient Singleton', () => {
       await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
       queryClient.invalidateQueryData({ queryKey });
-      expect(queryClient.getQueryData({ queryKey })?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryData({ queryKey })?.getMetadata()?.isInvalidated).toBe(true);
 
       mockQueryFn.mockResolvedValueOnce('fetched data 2');
       const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
       const storedQuery = queryClient.getQueryData({ queryKey });
       expect(response.data).toBe('fetched data 2');
-      expect(storedQuery?.isInvalidated).toBe(false);
+      expect(storedQuery?.getMetadata()?.isInvalidated).toBe(false);
       expect(mockQueryFn).toHaveBeenCalledTimes(2);
     });
   });
