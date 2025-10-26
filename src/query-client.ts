@@ -2,6 +2,7 @@ import SSignal from 'ssignal';
 import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
 import type { QueryFn } from './query-fn';
 import { QueryItem, type QueryItemConfig, type QueryItemWithData } from './query-item';
+import { partialMatchKey } from './utils/utils';
 
 const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
 
@@ -13,6 +14,7 @@ export interface QueryConfig<T = unknown> extends QueryItemConfig {
   refetch?: boolean;
   queryKey: string[];
   queryFn: QueryFn<T>;
+  exact?: boolean;
 }
 
 export class QueryClient {
@@ -121,13 +123,27 @@ export class QueryClient {
     const key = QueryClient.getQueryKey(queryKey);
     const data = this.getQueryData({ queryKey });
 
-    this.queries.value.set(key, data.updateData(newData));
+    if (data) {
+      this.queries.value.set(key, data.updateData(newData));
+    }
   }
 
-  getQueryData<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>): QueryItem<T> {
-    const key = QueryClient.getQueryKey(queryKey);
+  getQueryData<T = unknown>({ queryKey, exact }: Pick<QueryConfig<T>, 'queryKey' | 'exact'>): QueryItem<T> | undefined {
+    if (exact) {
+      const key = QueryClient.getQueryKey(queryKey);
 
-    return this.queries.value.get(key) as QueryItem<T>;
+      return this.queries.value.get(key) as QueryItem<T>;
+    }
+    
+    for (const [key, queryItem] of this.queries.value.entries()) {
+      const parsedKey = QueryClient.parseQueryKey(key);
+
+      if (partialMatchKey(queryKey, parsedKey)) {
+        return queryItem as QueryItem<T>;
+      }
+    }
+
+    return undefined;
   }
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
@@ -143,6 +159,10 @@ export class QueryClient {
 
     const storedData = this.getQueryData<T>({ queryKey });
 
+    if (!storedData) {
+      throw new Error('No query in queries.');
+    }
+
     if (storedData.timeoutId) {
       clearTimeout(storedData.timeoutId);
     }
@@ -150,9 +170,13 @@ export class QueryClient {
     return this.fetchQuery<T>({ queryKey, queryFn: storedData.queryFn, ignoreCache: true, staleTime: storedData.staleTime, refetch: true });
   }
 
-  async invalidateQueryData<T = unknown>({ queryKey }: Omit<QueryConfig<T>, 'queryFn'>) {
-    const data = this.getQueryData<T>({ queryKey }).invalidate();
+  async invalidateQueryData<T = unknown>({ queryKey, exact }: Omit<QueryConfig<T>, 'queryFn'>): Promise<void> {
+    const data = this.getQueryData<T>({ queryKey, exact })?.invalidate();
 
+    if (!data) {
+      throw new Error('No query in queries.');
+    }
+  
     this.updateQuery<T>(queryKey, data);
   }
 
