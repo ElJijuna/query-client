@@ -205,27 +205,19 @@ export class QueryClient {
   }
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
-    // Support removing by exact key or by partial key
-    const exactKey = QueryClient.getQueryKey(queryKey);
+    const prefix = QueryClient.getQueryKey(queryKey);
+    const matchingKeys = this.keyIndex.get(prefix) ?? new Set();
 
-    // If an exact key exists, remove it directly
-    if (this.queries.value.has(exactKey)) {
-      this.queries.value.delete(exactKey);
+    let removed = false;
+    for (const key of matchingKeys) {
+      this.unindexKey(QueryClient.parseQueryKey(key));
+      this.queries.value.delete(key);
+      removed = true;
+    }
+
+    if (removed) {
       this.queries.value = new Map(this.queries.value);
-      return;
     }
-
-    // Otherwise, remove all partial matches
-    const keysToRemove: string[] = [];
-    for (const [key] of this.queries.value.entries()) {
-      const parsedKey = QueryClient.parseQueryKey(key);
-      if (partialMatchKey(queryKey, parsedKey)) {
-        keysToRemove.push(key);
-      }
-    }
-
-    for (const k of keysToRemove) this.queries.value.delete(k);
-    if (keysToRemove.length > 0) this.queries.value = new Map(this.queries.value);
   }
 
   /** Return the number of queries currently stored in the client */

@@ -26,14 +26,28 @@ export interface QueryItemMetadata {
 const METADATA = Symbol('query.item.metadata');
 const DATA = Symbol('query.item.data');
 
-const clone = <U>(value: U): U => {
-  try {
-    const sc = (globalThis as any).structuredClone;
-    if (typeof sc === 'function') return sc(value);
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    // Fallback: return the value as-is (for primitives it's fine)
+import type { CacheDataStrategy } from './query-client-config';
+
+const protectData = <U>(value: U, strategy: CacheDataStrategy = 'clone'): U => {
+  if (value === null || value === undefined || typeof value !== 'object') {
     return value;
+  }
+
+  switch (strategy) {
+    case 'clone':
+      try {
+        const sc = (globalThis as any).structuredClone;
+        if (typeof sc === 'function') return sc(value);
+        return JSON.parse(JSON.stringify(value));
+      } catch {
+        return value;
+      }
+    case 'freeze':
+      return Object.freeze({ ...value });
+    case 'reference':
+      return value;
+    default:
+      return value;
   }
 };
 
@@ -64,8 +78,14 @@ export class QueryItem<T = unknown> {
    * Public accessor for the data which returns a cloned copy to prevent
    * accidental external mutation of the cached value.
    */
+  private dataStrategy: CacheDataStrategy = 'clone';
+
   public get data(): T {
-    return clone(this[DATA]);
+    return protectData(this[DATA], this.dataStrategy);
+  }
+
+  public setDataStrategy(strategy: CacheDataStrategy): void {
+    this.dataStrategy = strategy;
   }
 
   /**
