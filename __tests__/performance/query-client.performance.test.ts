@@ -1,4 +1,4 @@
-import { QueryClient } from './query-client';
+import { QueryClient } from '../../src/query-client';
 
 describe('Performance Tests', () => {
     let queryClient: QueryClient;
