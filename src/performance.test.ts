@@ -133,7 +133,7 @@ describe('Performance Tests', () => {
             // Verify memory growth is roughly linear
             for (let i = 1; i < sizes.length; i++) {
                 const current = sizes[i];
-                const previous = sizes[i-1];
+                const previous = sizes[i - 1];
                 if (current === undefined || previous === undefined) continue;
                 const ratio = current / previous;
                 expect(ratio).toBeGreaterThan(5); // Should grow by roughly 10x each time

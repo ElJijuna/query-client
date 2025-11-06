@@ -22,7 +22,7 @@ describe('QueryItem', () => {
     // Test null/undefined handling
     queryItem.updateData(null as any);
     expect(queryItem.data).toBeNull();
-    
+
     queryItem.updateData(undefined as any);
     expect(queryItem.data).toBeUndefined();
   });

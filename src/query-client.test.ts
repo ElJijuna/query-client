@@ -146,24 +146,24 @@ describe('QueryClient Singleton', () => {
         gcTime: 200,
         dataStrategy: 'freeze' as const
       };
-      
+
       queryClient.setConfig(customConfig);
       mockQueryFn.mockResolvedValueOnce('initial');
-      
+
       // Initial fetch
       const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
       expect(response.data).toBe('initial');
-      
+
       // Wait for stale
       jest.advanceTimersByTime(101);
       await Promise.resolve(); // Flush promises
       expect(queryClient.getQueryData({ queryKey })?.isStale()).toBe(true);
-      
+
       // Wait for GC
       jest.advanceTimersByTime(200); // Full gcTime
       await Promise.resolve(); // Flush promises
       expect(queryClient.getQueryData({ queryKey })).toBeUndefined();
-      
+
       jest.useRealTimers();
     });
 
@@ -175,15 +175,15 @@ describe('QueryClient Singleton', () => {
         new TypeError('Parse error'),
         new Error('Final error')
       ];
-      
+
       let errorCount = 0;
       mockQueryFn.mockImplementation(() => {
         const error = errors[errorCount++];
         return Promise.reject(error);
       });
-      
+
       queryClient.setConfig({ retry: 2, retryDelay: () => 10 });
-      
+
       try {
         const promise = queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
         for (let i = 0; i <= 2; i++) {
@@ -196,7 +196,7 @@ describe('QueryClient Singleton', () => {
         expect((error as QueryClientErrorResponse<Error>).error).toBe(errors[2]);
         expect(errorCount).toBe(3);
       }
-      
+
       jest.useRealTimers();
     });
 
@@ -302,17 +302,17 @@ describe('QueryClient Singleton', () => {
     it('should notify subscribers of store changes', async () => {
       const unsubscribeSpy = jest.fn();
       const subscribeSpy = jest.fn(() => unsubscribeSpy);
-      
+
       queryClient.subscribe(subscribeSpy);
-      
+
       // Trigger a store change
       const queryKey = ['test'];
       mockQueryFn.mockResolvedValueOnce('data');
-      
+
       await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
-      
+
       expect(subscribeSpy).toHaveBeenCalled();
-      
+
       // Test unsubscribe
       queryClient.destroy();
       expect(unsubscribeSpy).toHaveBeenCalled();
@@ -321,14 +321,14 @@ describe('QueryClient Singleton', () => {
     it('should handle query key conflicts and updates correctly', async () => {
       const queryKey = ['conflict-test'];
       mockQueryFn.mockResolvedValueOnce('data1');
-      
+
       // First fetch
       await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
-      
+
       // Update with new data
       mockQueryFn.mockResolvedValueOnce('data2');
       await queryClient.refetchQueries({ queryKey });
-      
+
       const data = queryClient.getQueryData({ queryKey });
       expect(data?.data).toBe('data2');
     });
