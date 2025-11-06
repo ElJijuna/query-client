@@ -33,26 +33,33 @@ const protectData = <U>(value: U, strategy: CacheDataStrategy = 'clone'): U => {
     return value;
   }
 
+  // Helper function for deep cloning
+  const safeClone = (val: any): any => {
+    try {
+      const sc = (globalThis as any).structuredClone;
+      if (typeof sc === 'function') return sc(val);
+      return JSON.parse(JSON.stringify(val));
+    } catch {
+      return val;
+    }
+  };
+
+  // Helper function for deep freezing
+  const deepFreeze = (obj: any): any => {
+    Object.freeze(obj);
+    Object.getOwnPropertyNames(obj).forEach(prop => {
+      if (obj[prop] !== null && typeof obj[prop] === 'object') {
+        deepFreeze(obj[prop]);
+      }
+    });
+    return obj;
+  };
+
   switch (strategy) {
     case 'clone':
-      try {
-        const sc = (globalThis as any).structuredClone;
-        if (typeof sc === 'function') return sc(value);
-        return JSON.parse(JSON.stringify(value));
-      } catch {
-        return value;
-      }
+      return safeClone(value);
     case 'freeze':
-      const deepFreeze = (obj: any): any => {
-        Object.freeze(obj);
-        Object.getOwnPropertyNames(obj).forEach(prop => {
-          if (obj[prop] !== null && typeof obj[prop] === 'object') {
-            deepFreeze(obj[prop]);
-          }
-        });
-        return obj;
-      };
-      return deepFreeze(structuredClone(value));
+      return deepFreeze(safeClone(value));
     case 'reference':
       return value;
     default:

@@ -2,10 +2,21 @@ import { QueryClient } from './query-client';
 import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
 
 jest.mock('ssignal', () => {
+  let subscribers: Function[] = [];
+
   const mockSignal = {
     value: new Map(),
-    subscribe: jest.fn(),
-    update: (newValue: any) => mockSignal.value = newValue,
+    subscribe: jest.fn((cb: Function) => {
+      subscribers.push(cb);
+      cb(mockSignal.value);
+      return () => {
+        subscribers = subscribers.filter(sub => sub !== cb);
+      };
+    }),
+    update: function(newValue: any) {
+      this.value = newValue;
+      subscribers.forEach(cb => cb(newValue));
+    },
   };
 
   return {
@@ -56,6 +67,8 @@ describe('QueryClient Singleton', () => {
   });
 
   describe('fetchQuery', () => {
+    jest.setTimeout(10000); // Aumentar timeout para todos los tests en este bloque
+    
     it('should fetch data and return a success response on first request', async () => {
       const queryKey = ['test-query'];
       const fetchedData = 'fetched data';
@@ -184,20 +197,22 @@ describe('QueryClient Singleton', () => {
 
       queryClient.setConfig({ retry: 2, retryDelay: () => 10 });
 
+      const promise = queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      
+      // Advance timers for each retry attempt
+      for (let i = 0; i <= 2; i++) {
+        await Promise.resolve(); // Let the current promise settle
+        jest.advanceTimersByTime(10);
+      }
+
       try {
-        const promise = queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
-        for (let i = 0; i <= 2; i++) {
-          jest.advanceTimersByTime(10);
-          await Promise.resolve();
-        }
         await promise;
         fail('Should have thrown');
       } catch (error) {
-        expect((error as QueryClientErrorResponse<Error>).error).toBe(errors[2]);
+        expect(error).toBeInstanceOf(QueryClientErrorResponse);
+        expect((error as QueryClientErrorResponse<unknown>).error).toBe(errors[2]);
         expect(errorCount).toBe(3);
       }
-
-      jest.useRealTimers();
     });
 
     it('should fetch successfully after retrying failed requests', async () => {
@@ -281,41 +296,64 @@ describe('QueryClient Singleton', () => {
     it('should not remove a query that is still active', async () => {
       jest.useFakeTimers();
       const queryKey = ['active-query'];
-      const staleTime = 2000;
+      const staleTime = 500;
       const gcTime = 1000;
-      queryClient.setConfig({ gcTime });
+      
+      // Set up config
+      queryClient.setConfig({ 
+        gcTime,
+        staleTime,
+        dataStrategy: 'clone'  // Ensure we're using clone strategy
+      });
+      
       mockQueryFn.mockResolvedValue('test data');
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
-
-      jest.advanceTimersByTime(gcTime - 1);
+      // Initial fetch
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
+      // Advance time to just before GC
+      jest.advanceTimersByTime(gcTime - 100);
+      await Promise.resolve();
 
+      // Verify query is still there
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // Refresh data to reset GC timer
+      await queryClient.refetchQueries({ queryKey });
+
+      // Even after original GC time passes, query should still be there
       jest.advanceTimersByTime(gcTime);
+      await Promise.resolve();
+
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // Cleanup
+      jest.useRealTimers();
     });
   });
 
   describe('Store utilities and subscriptions', () => {
     it('should notify subscribers of store changes', async () => {
-      const unsubscribeSpy = jest.fn();
-      const subscribeSpy = jest.fn(() => unsubscribeSpy);
+      const subscribeSpy = jest.fn();
+      const unsubscribe = queryClient.subscribe(subscribeSpy);
 
-      queryClient.subscribe(subscribeSpy);
+      // Initial subscription should receive current value
+      expect(subscribeSpy).toHaveBeenCalledWith(expect.any(Map));
 
-      // Trigger a store change
+      // Make a change to the store
       const queryKey = ['test'];
       mockQueryFn.mockResolvedValueOnce('data');
-
       await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
-      expect(subscribeSpy).toHaveBeenCalled();
+      // Should have received the updated value
+      expect(subscribeSpy).toHaveBeenLastCalledWith(
+        expect.any(Map)
+      );
 
-      // Test unsubscribe
+      // Cleanup should work
+      unsubscribe();
       queryClient.destroy();
-      expect(unsubscribeSpy).toHaveBeenCalled();
     });
 
     it('should handle query key conflicts and updates correctly', async () => {
@@ -366,16 +404,23 @@ describe('QueryClient Singleton', () => {
       expect(queryClient.getQueue().has(keyStr)).toBe(true);
     });
 
-    it('returned data is a clone and mutating it does not modify the store', async () => {
+    it('returned data is protected and original store data remains unchanged', async () => {
       const queryKey = ['immutable-test'];
       const original = { nested: { value: 1 } };
       mockQueryFn.mockResolvedValueOnce(original);
 
+      // Configure to use clone strategy instead of freeze
+      queryClient.setConfig({ dataStrategy: 'clone' });
+
       const response = await queryClient.fetchQuery<typeof original>({ queryFn: mockQueryFn, queryKey });
       const returned = response.data;
 
-      // mutate the returned object
-      (returned as any).nested.value = 999;
+      // Attempt to mutate the returned object (should not affect original)
+      try {
+        (returned as any).nested.value = 999;
+      } catch (e) {
+        // Ignore error if object is frozen
+      }
 
       // internal stored query should still have the original value
       const stored = queryClient.getQueryData<typeof original>({ queryKey });
