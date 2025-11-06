@@ -41,4 +41,24 @@ describe('QueryItem', () => {
     expect(queryItem.data).toBeUndefined();
     expect(queryItem.getMetadata().isInvalidated).toBe(true);
   });
+
+  it('Should compute timeLeftToStale correctly', () => {
+    jest.useFakeTimers();
+    const queryFn = jest.fn();
+    const staleTime = 2000;
+    const queryItem = new QueryItem('fetched data', { queryFn, staleTime });
+
+    // Immediately after creation, timeLeftToStale should be <= staleTime and > 0
+    const tLeft1 = queryItem.timeLeftToStale;
+    expect(tLeft1).toBeGreaterThanOrEqual(0);
+    expect(tLeft1).toBeLessThanOrEqual(staleTime);
+
+    // Advance half the time and ensure the left time decreased roughly as expected
+    jest.advanceTimersByTime(1000);
+    const tLeft2 = queryItem.timeLeftToStale;
+    expect(tLeft2).toBeGreaterThanOrEqual(0);
+    expect(tLeft2).toBeLessThanOrEqual(tLeft1);
+
+    jest.useRealTimers();
+  });
 });

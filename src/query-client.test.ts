@@ -234,4 +234,39 @@ describe('QueryClient Singleton', () => {
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
     });
   });
+
+  describe('Store utilities', () => {
+    it('should remove queries by partial key', async () => {
+      const user1 = ['user', '1'];
+      const user2 = ['user', '2'];
+
+      mockQueryFn.mockResolvedValue('a');
+
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey: user1 });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey: user2 });
+
+      expect(queryClient.getStoreSize()).toBe(2);
+
+      queryClient.removeQueries({ queryKey: ['user'] });
+
+      expect(queryClient.getStoreSize()).toBe(0);
+    });
+
+    it('getQueue returns a shallow copy (not the internal Map reference)', async () => {
+      const queryKey = ['copy-test'];
+      mockQueryFn.mockResolvedValue('value');
+
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const keyStr = QueryClient.getQueryKey(queryKey);
+      const externalQueue = queryClient.getQueue();
+
+      // Remove from the external copy
+      externalQueue.delete(keyStr);
+
+      // Internal store should remain untouched
+      expect(queryClient.getStoreSize()).toBe(1);
+      expect(queryClient.getQueue().has(keyStr)).toBe(true);
+    });
+  });
 });

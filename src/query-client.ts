@@ -83,7 +83,8 @@ export class QueryClient {
   }
 
   getQueue<T = unknown>(): Map<string, QueryItem<T>> {
-    return this.queries.value as Map<string, QueryItem<T>>;
+    // Return a shallow copy to avoid exposing internal Map reference
+    return new Map(this.queries.value as Map<string, QueryItem<T>>);
   }
 
   getJsonQueue<T = unknown>(): unknown {
@@ -164,8 +165,32 @@ export class QueryClient {
   }
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
-    const key = QueryClient.getQueryKey(queryKey);
-    this.queries.value.delete(key);
+    // Support removing by exact key or by partial key
+    const exactKey = QueryClient.getQueryKey(queryKey);
+
+    // If an exact key exists, remove it directly
+    if (this.queries.value.has(exactKey)) {
+      this.queries.value.delete(exactKey);
+      this.queries.value = new Map(this.queries.value);
+      return;
+    }
+
+    // Otherwise, remove all partial matches
+    const keysToRemove: string[] = [];
+    for (const [key] of this.queries.value.entries()) {
+      const parsedKey = QueryClient.parseQueryKey(key);
+      if (partialMatchKey(queryKey, parsedKey)) {
+        keysToRemove.push(key);
+      }
+    }
+
+    for (const k of keysToRemove) this.queries.value.delete(k);
+    if (keysToRemove.length > 0) this.queries.value = new Map(this.queries.value);
+  }
+
+  /** Return the number of queries currently stored in the client */
+  getStoreSize(): number {
+    return this.queries.value.size;
   }
 
   async refetchQueries<T = unknown>(
