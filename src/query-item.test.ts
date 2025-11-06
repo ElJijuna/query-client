@@ -8,7 +8,7 @@ describe('QueryItem', () => {
     expect(queryItem).toBeInstanceOf(QueryItem);
   });
 
-  it('Should execute updateDate', () => {
+  it('Should execute updateData and handle edge cases', () => {
     const queryFn = jest.fn();
     const queryItem = new QueryItem<string>('fetched data', { queryFn });
 
@@ -18,6 +18,37 @@ describe('QueryItem', () => {
     queryItem.updateData('fetched data 2');
     expect(queryItem.data).toBe('fetched data 2');
     expect(queryItem.getMetadata().dataUpdatedAt).toBeDefined();
+
+    // Test null/undefined handling
+    queryItem.updateData(null as any);
+    expect(queryItem.data).toBeNull();
+    
+    queryItem.updateData(undefined as any);
+    expect(queryItem.data).toBeUndefined();
+  });
+
+  it('Should handle data protection strategies correctly', () => {
+    const queryFn = jest.fn();
+    const complexData = { nested: { value: 42 } };
+    const queryItem = new QueryItem(complexData, { queryFn });
+
+    // Test clone strategy (default)
+    const clonedData = queryItem.data;
+    (clonedData as any).nested.value = 100;
+    expect(queryItem.data.nested.value).toBe(42); // Original unchanged
+
+    // Test freeze strategy
+    queryItem.setDataStrategy('freeze');
+    const frozenData = queryItem.data;
+    expect(() => {
+      (frozenData as any).nested.value = 200;
+    }).toThrow(); // Should throw in strict mode
+
+    // Test reference strategy
+    queryItem.setDataStrategy('reference');
+    const refData = queryItem.data;
+    (refData as any).nested.value = 300;
+    expect(queryItem.data.nested.value).toBe(300); // Original changed
   });
 
   it('Should execute updateError', () => {
