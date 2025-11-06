@@ -43,7 +43,16 @@ const protectData = <U>(value: U, strategy: CacheDataStrategy = 'clone'): U => {
         return value;
       }
     case 'freeze':
-      return Object.freeze({ ...value });
+      const deepFreeze = (obj: any): any => {
+        Object.freeze(obj);
+        Object.getOwnPropertyNames(obj).forEach(prop => {
+          if (obj[prop] !== null && typeof obj[prop] === 'object') {
+            deepFreeze(obj[prop]);
+          }
+        });
+        return obj;
+      };
+      return deepFreeze(structuredClone(value));
     case 'reference':
       return value;
     default:

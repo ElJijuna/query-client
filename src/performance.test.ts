@@ -55,8 +55,8 @@ describe('Performance Tests', () => {
             console.log('Data Strategy Performance (ms):', results);
 
             // Just verify relative performance
-            expect(results.reference).toBeLessThan(results.freeze);
-            expect(results.freeze).toBeLessThan(results.clone);
+            expect(results.reference ?? Infinity).toBeLessThan(results.freeze ?? Infinity);
+            expect(results.freeze ?? Infinity).toBeLessThan(results.clone ?? Infinity);
         });
     });
 
@@ -132,7 +132,10 @@ describe('Performance Tests', () => {
 
             // Verify memory growth is roughly linear
             for (let i = 1; i < sizes.length; i++) {
-                const ratio = sizes[i] / sizes[i - 1];
+                const current = sizes[i];
+                const previous = sizes[i-1];
+                if (current === undefined || previous === undefined) continue;
+                const ratio = current / previous;
                 expect(ratio).toBeGreaterThan(5); // Should grow by roughly 10x each time
             }
         });
