@@ -24,17 +24,59 @@ export interface QueryItemMetadata {
 }
 
 const METADATA = Symbol('query.item.metadata');
+const DATA = Symbol('query.item.data');
+
+import type { CacheDataStrategy } from './query-client-config';
+
+const protectData = <U>(value: U, strategy: CacheDataStrategy = 'clone'): U => {
+  if (value === null || value === undefined || typeof value !== 'object') {
+    return value;
+  }
+
+  // Helper function for deep cloning
+  const safeClone = (val: any): any => {
+    try {
+      const sc = (globalThis as any).structuredClone;
+      if (typeof sc === 'function') return sc(val);
+      return JSON.parse(JSON.stringify(val));
+    } catch {
+      return val;
+    }
+  };
+
+  // Helper function for deep freezing
+  const deepFreeze = (obj: any): any => {
+    Object.freeze(obj);
+    Object.getOwnPropertyNames(obj).forEach(prop => {
+      if (obj[prop] !== null && typeof obj[prop] === 'object') {
+        deepFreeze(obj[prop]);
+      }
+    });
+    return obj;
+  };
+
+  switch (strategy) {
+    case 'clone':
+      return safeClone(value);
+    case 'freeze':
+      return deepFreeze(safeClone(value));
+    case 'reference':
+      return value;
+    default:
+      return value;
+  }
+};
 
 export class QueryItem<T = unknown> {
-  public data: T;
   public queryFn: QueryFn<T>;
   [METADATA]: QueryItemMetadata;
+  [DATA]: T;
 
   constructor(
     data: T,
     { queryFn, staleTime = 0 }: Omit<QueryItemConfig<T>, 'queryKey'>
   ) {
-    this.data = data;
+    this[DATA] = data;
     this.queryFn = queryFn;
 
     this[METADATA] = {
@@ -48,8 +90,26 @@ export class QueryItem<T = unknown> {
     };
   }
 
+  /**
+   * Public accessor for the data which returns a cloned copy to prevent
+   * accidental external mutation of the cached value.
+   */
+  private dataStrategy: CacheDataStrategy = 'clone';
+
+  public get data(): T {
+    return protectData(this[DATA], this.dataStrategy);
+  }
+
+  public setDataStrategy(strategy: CacheDataStrategy): void {
+    this.dataStrategy = strategy;
+  }
+
+  /**
+   * Time left in milliseconds before the item becomes stale. Never negative.
+   */
   public get timeLeftToStale(): number {
-    return this[METADATA].dataUpdatedAt - this[METADATA].staleTime;
+    const expiresAt = this[METADATA].dataUpdatedAt + this[METADATA].staleTime;
+    return Math.max(0, expiresAt - Date.now());
   }
 
   public getMetadata(): QueryItemMetadata {
@@ -57,7 +117,7 @@ export class QueryItem<T = unknown> {
   }
 
   public updateData(data: T): QueryItem<T> {
-    this.data = data;
+    this[DATA] = data;
     this.getMetadata().dataUpdatedAt = Date.now();
     return this;
   }
@@ -69,7 +129,7 @@ export class QueryItem<T = unknown> {
   }
 
   public invalidate(): QueryItem<T> {
-    this.data = undefined as T;
+    this[DATA] = undefined as T;
     this.getMetadata().isInvalidated = true;
     return this;
   }

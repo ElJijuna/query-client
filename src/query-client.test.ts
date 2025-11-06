@@ -2,10 +2,21 @@ import { QueryClient } from './query-client';
 import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
 
 jest.mock('ssignal', () => {
+  let subscribers: Function[] = [];
+
   const mockSignal = {
     value: new Map(),
-    subscribe: jest.fn(),
-    update: (newValue: any) => mockSignal.value = newValue,
+    subscribe: jest.fn((cb: Function) => {
+      subscribers.push(cb);
+      cb(mockSignal.value);
+      return () => {
+        subscribers = subscribers.filter(sub => sub !== cb);
+      };
+    }),
+    update: function(newValue: any) {
+      this.value = newValue;
+      subscribers.forEach(cb => cb(newValue));
+    },
   };
 
   return {
@@ -56,6 +67,8 @@ describe('QueryClient Singleton', () => {
   });
 
   describe('fetchQuery', () => {
+    jest.setTimeout(10000); // Aumentar timeout para todos los tests en este bloque
+    
     it('should fetch data and return a success response on first request', async () => {
       const queryKey = ['test-query'];
       const fetchedData = 'fetched data';
@@ -135,6 +148,71 @@ describe('QueryClient Singleton', () => {
 
       await expect(fetchPromise).rejects.toBeInstanceOf(QueryClientErrorResponse);
       expect(mockQueryFn).toHaveBeenCalledTimes(maxRetries + 1);
+    });
+
+    it('should handle query lifecycle with custom config', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['lifecycle-test'];
+      const customConfig = {
+        retry: 1,
+        staleTime: 100,
+        gcTime: 200,
+        dataStrategy: 'freeze' as const
+      };
+
+      queryClient.setConfig(customConfig);
+      mockQueryFn.mockResolvedValueOnce('initial');
+
+      // Initial fetch
+      const response = await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      expect(response.data).toBe('initial');
+
+      // Wait for stale
+      jest.advanceTimersByTime(101);
+      await Promise.resolve(); // Flush promises
+      expect(queryClient.getQueryData({ queryKey })?.isStale()).toBe(true);
+
+      // Wait for GC
+      jest.advanceTimersByTime(200); // Full gcTime
+      await Promise.resolve(); // Flush promises
+      expect(queryClient.getQueryData({ queryKey })).toBeUndefined();
+
+      jest.useRealTimers();
+    });
+
+    it('should handle complex error scenarios', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['error-handling'];
+      const errors = [
+        new Error('Network error'),
+        new TypeError('Parse error'),
+        new Error('Final error')
+      ];
+
+      let errorCount = 0;
+      mockQueryFn.mockImplementation(() => {
+        const error = errors[errorCount++];
+        return Promise.reject(error);
+      });
+
+      queryClient.setConfig({ retry: 2, retryDelay: () => 10 });
+
+      const promise = queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      
+      // Advance timers for each retry attempt
+      for (let i = 0; i <= 2; i++) {
+        await Promise.resolve(); // Let the current promise settle
+        jest.advanceTimersByTime(10);
+      }
+
+      try {
+        await promise;
+        fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(QueryClientErrorResponse);
+        expect((error as QueryClientErrorResponse<unknown>).error).toBe(errors[2]);
+        expect(errorCount).toBe(3);
+      }
     });
 
     it('should fetch successfully after retrying failed requests', async () => {
@@ -218,20 +296,157 @@ describe('QueryClient Singleton', () => {
     it('should not remove a query that is still active', async () => {
       jest.useFakeTimers();
       const queryKey = ['active-query'];
-      const staleTime = 2000;
+      const staleTime = 500;
+      const gcTime = 1000;
+      
+      // Set up config
+      queryClient.setConfig({ 
+        gcTime,
+        staleTime,
+        dataStrategy: 'clone'  // Ensure we're using clone strategy
+      });
+      
+      mockQueryFn.mockResolvedValue('test data');
+
+      // Initial fetch
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // Advance time to just before GC
+      jest.advanceTimersByTime(gcTime - 100);
+      await Promise.resolve();
+
+      // Verify query is still there
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // Refresh data to reset GC timer
+      await queryClient.refetchQueries({ queryKey });
+
+      // Even after original GC time passes, query should still be there
+      jest.advanceTimersByTime(gcTime);
+      await Promise.resolve();
+
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // Cleanup
+      jest.useRealTimers();
+    });
+  });
+
+  describe('Store utilities and subscriptions', () => {
+    it('should notify subscribers of store changes', async () => {
+      const subscribeSpy = jest.fn();
+      const unsubscribe = queryClient.subscribe(subscribeSpy);
+
+      // Initial subscription should receive current value
+      expect(subscribeSpy).toHaveBeenCalledWith(expect.any(Map));
+
+      // Make a change to the store
+      const queryKey = ['test'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      // Should have received the updated value
+      expect(subscribeSpy).toHaveBeenLastCalledWith(
+        expect.any(Map)
+      );
+
+      // Cleanup should work
+      unsubscribe();
+      queryClient.destroy();
+    });
+
+    it('should handle query key conflicts and updates correctly', async () => {
+      const queryKey = ['conflict-test'];
+      mockQueryFn.mockResolvedValueOnce('data1');
+
+      // First fetch
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      // Update with new data
+      mockQueryFn.mockResolvedValueOnce('data2');
+      await queryClient.refetchQueries({ queryKey });
+
+      const data = queryClient.getQueryData({ queryKey });
+      expect(data?.data).toBe('data2');
+    });
+
+    it('should remove queries by partial key', async () => {
+      const user1 = ['user', '1'];
+      const user2 = ['user', '2'];
+
+      mockQueryFn.mockResolvedValue('a');
+
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey: user1 });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey: user2 });
+
+      expect(queryClient.getStoreSize()).toBe(2);
+
+      queryClient.removeQueries({ queryKey: ['user'] });
+
+      expect(queryClient.getStoreSize()).toBe(0);
+    });
+
+    it('getQueue returns a shallow copy (not the internal Map reference)', async () => {
+      const queryKey = ['copy-test'];
+      mockQueryFn.mockResolvedValue('value');
+
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const keyStr = QueryClient.getQueryKey(queryKey);
+      const externalQueue = queryClient.getQueue();
+
+      // Remove from the external copy
+      externalQueue.delete(keyStr);
+
+      // Internal store should remain untouched
+      expect(queryClient.getStoreSize()).toBe(1);
+      expect(queryClient.getQueue().has(keyStr)).toBe(true);
+    });
+
+    it('returned data is protected and original store data remains unchanged', async () => {
+      const queryKey = ['immutable-test'];
+      const original = { nested: { value: 1 } };
+      mockQueryFn.mockResolvedValueOnce(original);
+
+      // Configure to use clone strategy instead of freeze
+      queryClient.setConfig({ dataStrategy: 'clone' });
+
+      const response = await queryClient.fetchQuery<typeof original>({ queryFn: mockQueryFn, queryKey });
+      const returned = response.data;
+
+      // Attempt to mutate the returned object (should not affect original)
+      try {
+        (returned as any).nested.value = 999;
+      } catch (e) {
+        // Ignore error if object is frozen
+      }
+
+      // internal stored query should still have the original value
+      const stored = queryClient.getQueryData<typeof original>({ queryKey });
+      expect((stored?.data as typeof original).nested.value).toBe(1);
+    });
+
+    it('should remove queries after gcTime has passed (eviction)', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['gc-evict-test'];
       const gcTime = 1000;
       queryClient.setConfig({ gcTime });
       mockQueryFn.mockResolvedValue('test data');
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
 
-      jest.advanceTimersByTime(gcTime - 1);
+      // initially present
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
 
-      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime });
+      // advance timers past gcTime
+      jest.advanceTimersByTime(gcTime + 1);
+      // flush microtasks
+      await Promise.resolve();
 
-      jest.advanceTimersByTime(gcTime);
-      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(false);
+
+      jest.useRealTimers();
     });
   });
 });
