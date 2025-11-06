@@ -86,16 +86,20 @@ export class QueryClient {
     return this.queries.value as Map<string, QueryItem<T>>;
   }
 
-  getJsonQueue<T = unknown>() {
-    const queue = Object.entries(Object.fromEntries(this.getQueue<T>()))
-      .map(([queryKey, { data, queryFn, ...rest }]) => ({
-        queryKey,
-        queryKeyOriginal: QueryClient.parseQueryKey(queryKey),
-        data,
-        config: { ...rest },
-      }));
+  getJsonQueue<T = unknown>(): unknown {
+    try {
+      const queue = Object.entries(Object.fromEntries(this.getQueue<T>()))
+        .map(([queryKey, { data, queryFn, ...rest }]) => ({
+          queryKey,
+          queryKeyOriginal: QueryClient.parseQueryKey(queryKey),
+          data,
+          config: { ...rest },
+        }));
 
-    return queue;
+      return queue;
+    } catch {
+      return [];
+    }
   }
 
   subscribe(callback: (value: Map<string, QueryItem<unknown>>) => () => void) {
