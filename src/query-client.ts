@@ -76,14 +76,22 @@ export class QueryClient {
 
   private runGarbageCollection(): void {
     const now = Date.now();
+    let hasRemovals = false;
 
     for (const [key, queryItem] of this.queries.value.entries()) {
       if (now - queryItem.getMetadata().dataUpdatedAt > this.config.gcTime) {
+        if (queryItem.getMetadata().timeoutId) {
+          clearTimeout(queryItem.getMetadata().timeoutId);
+        }
+        this.unindexKey(QueryClient.parseQueryKey(key));
         this.queries.value.delete(key);
+        hasRemovals = true;
       }
     }
 
-    this.queries.value = new Map(this.queries.value);
+    if (hasRemovals) {
+      this.queries.value = new Map(this.queries.value);
+    }
   }
 
   private isStored<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>): boolean {
@@ -99,6 +107,7 @@ export class QueryClient {
 
   clear(): QueryClient {
     this.queries.value.clear();
+    this.keyIndex.clear();
     this.startGarbageCollection();
     return this;
   }
@@ -197,10 +206,22 @@ export class QueryClient {
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
     const prefix = QueryClient.getQueryKey(queryKey);
-    const matchingKeys = this.keyIndex.get(prefix) ?? new Set();
+    const matchingKeys = Array.from(this.keyIndex.get(prefix) ?? []);
+
+    if (matchingKeys.length === 0 && this.queries.value.has(prefix)) {
+      // If no indexed matches but exact key exists, remove it
+      this.unindexKey(queryKey);
+      this.queries.value.delete(prefix);
+      this.queries.value = new Map(this.queries.value);
+      return;
+    }
 
     let removed = false;
     for (const key of matchingKeys) {
+      const item = this.queries.value.get(key);
+      if (item?.getMetadata().timeoutId) {
+        clearTimeout(item.getMetadata().timeoutId);
+      }
       this.unindexKey(QueryClient.parseQueryKey(key));
       this.queries.value.delete(key);
       removed = true;
@@ -209,9 +230,7 @@ export class QueryClient {
     if (removed) {
       this.queries.value = new Map(this.queries.value);
     }
-  }
-
-  /** Return the number of queries currently stored in the client */
+  }  /** Return the number of queries currently stored in the client */
   getStoreSize(): number {
     return this.queries.value.size;
   }
