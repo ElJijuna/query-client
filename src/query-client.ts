@@ -26,6 +26,32 @@ export class QueryClient {
   private config: Required<Omit<QueryItemConfig, 'queryKey' | 'queryFn'>>;
   private gcInterval: number | undefined;
 
+  // Index for partial key lookup optimization
+  private keyIndex = new Map<string, Set<string>>();
+
+  private indexKey(key: string[]): void {
+    const fullKey = QueryClient.getQueryKey(key);
+    // Index each prefix
+    for (let i = 0; i < key.length; i++) {
+      const prefix = QueryClient.getQueryKey(key.slice(0, i + 1));
+      if (!this.keyIndex.has(prefix)) {
+        this.keyIndex.set(prefix, new Set());
+      }
+      this.keyIndex.get(prefix)?.add(fullKey);
+    }
+  }
+
+  private unindexKey(key: string[]): void {
+    const fullKey = QueryClient.getQueryKey(key);
+    for (let i = 0; i < key.length; i++) {
+      const prefix = QueryClient.getQueryKey(key.slice(0, i + 1));
+      this.keyIndex.get(prefix)?.delete(fullKey);
+      if (this.keyIndex.get(prefix)?.size === 0) {
+        this.keyIndex.delete(prefix);
+      }
+    }
+  }
+
   constructor() {
     this.config = {
       staleTime: DEFAULT_STALE_TIME,
@@ -33,6 +59,7 @@ export class QueryClient {
       retryDelay: (attempt: number) => Math.min(1000 * 2 ** attempt, 30000),
       gcTime: DEFAULT_GC_TIME,
       ignoreCache: false,
+      dataStrategy: 'clone',
     };
   }
 
@@ -120,11 +147,15 @@ export class QueryClient {
   }: QueryItemWithData<T>): void {
     const key = QueryClient.getQueryKey(queryKey);
     const queryItem = new QueryItem<T>(data, { queryFn, staleTime });
+    queryItem.setDataStrategy(this.config.dataStrategy);
 
+    // Schedule removal using gcTime (cache eviction), not staleTime.
+    // staleTime indicates freshness; gcTime indicates when to evict from cache.
     queryItem.getMetadata().timeoutId = setTimeout(() => {
       this.removeQueries({ queryKey });
-    }, staleTime);
+    }, this.config.gcTime);
 
+    this.indexKey(queryKey);
     this.queries.value.set(key, queryItem);
   }
 
@@ -165,27 +196,19 @@ export class QueryClient {
   }
 
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
-    // Support removing by exact key or by partial key
-    const exactKey = QueryClient.getQueryKey(queryKey);
+    const prefix = QueryClient.getQueryKey(queryKey);
+    const matchingKeys = this.keyIndex.get(prefix) ?? new Set();
 
-    // If an exact key exists, remove it directly
-    if (this.queries.value.has(exactKey)) {
-      this.queries.value.delete(exactKey);
+    let removed = false;
+    for (const key of matchingKeys) {
+      this.unindexKey(QueryClient.parseQueryKey(key));
+      this.queries.value.delete(key);
+      removed = true;
+    }
+
+    if (removed) {
       this.queries.value = new Map(this.queries.value);
-      return;
     }
-
-    // Otherwise, remove all partial matches
-    const keysToRemove: string[] = [];
-    for (const [key] of this.queries.value.entries()) {
-      const parsedKey = QueryClient.parseQueryKey(key);
-      if (partialMatchKey(queryKey, parsedKey)) {
-        keysToRemove.push(key);
-      }
-    }
-
-    for (const k of keysToRemove) this.queries.value.delete(k);
-    if (keysToRemove.length > 0) this.queries.value = new Map(this.queries.value);
   }
 
   /** Return the number of queries currently stored in the client */

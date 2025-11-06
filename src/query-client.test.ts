@@ -268,5 +268,43 @@ describe('QueryClient Singleton', () => {
       expect(queryClient.getStoreSize()).toBe(1);
       expect(queryClient.getQueue().has(keyStr)).toBe(true);
     });
+
+    it('returned data is a clone and mutating it does not modify the store', async () => {
+      const queryKey = ['immutable-test'];
+      const original = { nested: { value: 1 } };
+      mockQueryFn.mockResolvedValueOnce(original);
+
+      const response = await queryClient.fetchQuery<typeof original>({ queryFn: mockQueryFn, queryKey });
+      const returned = response.data;
+
+      // mutate the returned object
+      (returned as any).nested.value = 999;
+
+      // internal stored query should still have the original value
+      const stored = queryClient.getQueryData<typeof original>({ queryKey });
+      expect((stored?.data as typeof original).nested.value).toBe(1);
+    });
+
+    it('should remove queries after gcTime has passed (eviction)', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['gc-evict-test'];
+      const gcTime = 1000;
+      queryClient.setConfig({ gcTime });
+      mockQueryFn.mockResolvedValue('test data');
+
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      // initially present
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(true);
+
+      // advance timers past gcTime
+      jest.advanceTimersByTime(gcTime + 1);
+      // flush microtasks
+      await Promise.resolve();
+
+      expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(false);
+
+      jest.useRealTimers();
+    });
   });
 });
