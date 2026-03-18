@@ -152,38 +152,54 @@ export class QueryClient {
     status: 'fresh' | 'stale' | 'expired' | 'invalidated';
   }> {
     const now = Date.now();
-    const result = [];
+    const result: Array<{
+      queryKey: string[];
+      key: string;
+      createdAt: number;
+      updatedAt: number;
+      expiresAt: number;
+      timeLeftToExpire: number;
+      isStale: boolean;
+      isInvalidated: boolean;
+      staleTime: number;
+      gcTime: number;
+      status: 'fresh' | 'stale' | 'expired' | 'invalidated';
+    }> = [];
 
     for (const [key, queryItem] of this.queries.value.entries()) {
-      const metadata = queryItem.getMetadata();
-      const expiresAt = metadata.dataUpdatedAt + this.config.gcTime;
-      const timeLeftToExpire = Math.max(0, expiresAt - now);
-      const isStale = queryItem.isStale();
-      const isInvalidated = metadata.isInvalidated;
+      try {
+        const metadata = queryItem.getMetadata();
+        const expiresAt = metadata.dataUpdatedAt + this.config.gcTime;
+        const timeLeftToExpire = Math.max(0, expiresAt - now);
+        const isStale = queryItem.isStale();
+        const isInvalidated = metadata.isInvalidated;
 
-      // Determine status
-      let status: 'fresh' | 'stale' | 'expired' | 'invalidated' = 'fresh';
-      if (isInvalidated) {
-        status = 'invalidated';
-      } else if (timeLeftToExpire === 0) {
-        status = 'expired';
-      } else if (isStale) {
-        status = 'stale';
+        // Determine status
+        let status: 'fresh' | 'stale' | 'expired' | 'invalidated' = 'fresh';
+        if (isInvalidated) {
+          status = 'invalidated';
+        } else if (timeLeftToExpire === 0) {
+          status = 'expired';
+        } else if (isStale) {
+          status = 'stale';
+        }
+
+        result.push({
+          queryKey: QueryClient.parseQueryKey(key),
+          key,
+          createdAt: metadata.dataCreatedAt,
+          updatedAt: metadata.dataUpdatedAt,
+          expiresAt,
+          timeLeftToExpire,
+          isStale,
+          isInvalidated,
+          staleTime: metadata.staleTime,
+          gcTime: this.config.gcTime,
+          status,
+        });
+      } catch (error) {
+        this.error(`Error building queue array entry for key ${key}`, error);
       }
-
-      result.push({
-        queryKey: QueryClient.parseQueryKey(key),
-        key,
-        createdAt: metadata.dataCreatedAt,
-        updatedAt: metadata.dataUpdatedAt,
-        expiresAt,
-        timeLeftToExpire,
-        isStale,
-        isInvalidated,
-        staleTime: metadata.staleTime,
-        gcTime: this.config.gcTime,
-        status,
-      });
     }
 
     return result;
@@ -249,6 +265,7 @@ export class QueryClient {
 
     if (data) {
       this.queries.value.set(key, data.updateData(newData));
+      this.log(`Query data refreshed`, { queryKey, key, newDataUpdatedAt: Date.now() });
     }
   }
 
@@ -271,26 +288,34 @@ export class QueryClient {
     return undefined;
   }
 
+  private clearQueryTimeout(queryItem: QueryItem | undefined): void {
+    if (queryItem?.getMetadata().timeoutId) {
+      clearTimeout(queryItem.getMetadata().timeoutId);
+    }
+  }
+
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
     const prefix = QueryClient.getQueryKey(queryKey);
     const matchingKeys = Array.from(this.keyIndex.get(prefix) ?? []);
 
     if (matchingKeys.length === 0 && this.queries.value.has(prefix)) {
       // If no indexed matches but exact key exists, remove it
+      const item = this.queries.value.get(prefix);
+      this.clearQueryTimeout(item);
       this.unindexKey(queryKey);
       this.queries.value.delete(prefix);
       this.queries.value = new Map(this.queries.value);
+      this.log(`Query key removed from cache`, { queryKey, key: prefix });
       return;
     }
 
     let removed = false;
     for (const key of matchingKeys) {
       const item = this.queries.value.get(key);
-      if (item?.getMetadata().timeoutId) {
-        clearTimeout(item.getMetadata().timeoutId);
-      }
+      this.clearQueryTimeout(item);
       this.unindexKey(QueryClient.parseQueryKey(key));
       this.queries.value.delete(key);
+      this.log(`Query key removed from cache`, { queryKey: QueryClient.parseQueryKey(key), key });
       removed = true;
     }
 
