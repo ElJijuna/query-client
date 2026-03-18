@@ -8,7 +8,15 @@ import type { QueryFn } from './query-fn';
 import { QueryItem, type QueryItemConfig, type QueryItemWithData } from './query-item';
 import { partialMatchKey } from './utils/utils';
 
-const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
+// Import file system utilities (only used in Node.js environment)
+let fs: any = null;
+let path: any = null;
+try {
+  fs = require('fs');
+  path = require('path');
+} catch {
+  // File system not available (browser environment)
+}const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
 
 export const DEFAULT_STALE_TIME = 1000 * 60;
 export const DEFAULT_RETRY = 3;
@@ -61,7 +69,127 @@ export class QueryClient {
       ignoreCache: false,
       dataStrategy: 'clone',
       enableLogging: false,
+      persistenceStrategy: 'memory',
+      persistencePath: this.getDefaultPersistencePath(),
     };
+
+    // Load cached data from file if file persistence is enabled
+    this.loadCacheFromFile();
+  }
+
+  private getDefaultPersistencePath(): string {
+    try {
+      return process.cwd ? process.cwd() : '.';
+    } catch {
+      return '.';
+    }
+  }
+
+  private getPersistenceFilePath(): string {
+    if (!this.config.persistencePath) {
+      this.config.persistencePath = this.getDefaultPersistencePath();
+    }
+    const fileName = 'query-cache.json';
+    if (path) {
+      return path.join(this.config.persistencePath, fileName);
+    }
+    return `${this.config.persistencePath}/${fileName}`;
+  }
+
+  private saveCacheToFile(): void {
+    if (this.config.persistenceStrategy !== 'file' || !fs || !path) {
+      return;
+    }
+
+    try {
+      const cacheData = this.serializeCacheForFile();
+      const filePath = this.getPersistenceFilePath();
+      
+      // Ensure directory exists
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      fs.writeFileSync(filePath, JSON.stringify(cacheData, null, 2), 'utf-8');
+      this.log(`Cache saved to file`, { filePath });
+    } catch (error) {
+      this.error('Failed to save cache to file', error);
+    }
+  }
+
+  private loadCacheFromFile(): void {
+    if (this.config.persistenceStrategy !== 'file' || !fs) {
+      return;
+    }
+
+    try {
+      const filePath = this.getPersistenceFilePath();
+      if (!fs.existsSync(filePath)) {
+        this.log(`Cache file not found`, { filePath });
+        return;
+      }
+
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const cacheData = JSON.parse(fileContent);
+      this.deserializeCacheFromFile(cacheData);
+      this.log(`Cache loaded from file`, { filePath });
+    } catch (error) {
+      this.error('Failed to load cache from file', error);
+    }
+  }
+
+  private serializeCacheForFile(): any {
+    const result: any = [];
+
+    for (const [key, queryItem] of this.queries.value.entries()) {
+      try {
+        const metadata = queryItem.getMetadata();
+        result.push({
+          queryKey: QueryClient.parseQueryKey(key),
+          key,
+          data: queryItem.data,
+          metadata: {
+            dataCreatedAt: metadata.dataCreatedAt,
+            dataUpdatedAt: metadata.dataUpdatedAt,
+            staleTime: metadata.staleTime,
+            isInvalidated: metadata.isInvalidated,
+          },
+        });
+      } catch (error) {
+        this.error(`Error serializing cache entry for key ${key}`, error);
+      }
+    }
+
+    return result;
+  }
+
+  private deserializeCacheFromFile(cacheData: any): void {
+    if (!Array.isArray(cacheData)) {
+      return;
+    }
+
+    for (const entry of cacheData) {
+      try {
+        const { queryKey, data, metadata } = entry;
+        if (!queryKey || !Array.isArray(queryKey)) {
+          continue;
+        }
+
+        const now = Date.now();
+        // Check if data is not expired
+        if (metadata && (now - metadata.dataUpdatedAt) <= this.config.gcTime) {
+          this.setQueryData({
+            queryKey,
+            data,
+            queryFn: async () => data,
+            staleTime: metadata.staleTime,
+          });
+        }
+      } catch (error) {
+        this.error('Error deserializing cache entry', error);
+      }
+    }
   }
 
   private log(message: string, data?: any): void {
@@ -249,6 +377,9 @@ export class QueryClient {
     this.indexKey(queryKey);
     this.queries.value.set(key, queryItem);
     this.log(`Query key created and cached`, { queryKey, key, staleTime, gcTime: this.config.gcTime });
+    
+    // Auto-save to file if file persistence is enabled
+    this.saveCacheToFile();
   }
 
   updateQuery<T = unknown>(queryKey: string[], data: QueryItem<T>): void {
@@ -266,6 +397,9 @@ export class QueryClient {
     if (data) {
       this.queries.value.set(key, data.updateData(newData));
       this.log(`Query data refreshed`, { queryKey, key, newDataUpdatedAt: Date.now() });
+      
+      // Auto-save to file if file persistence is enabled
+      this.saveCacheToFile();
     }
   }
 
