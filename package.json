@@ -1,5 +1,6 @@
 {
   "version": "1.3.0",
+  "description": "A lightweight and efficient query client for managing server state in JavaScript/TypeScript applications. Features include automatic caching, garbage collection, retry logic, and subscription-based updates.",
   "name": "query-client",
   "type": "module",
   "main": "lib/index.js",
