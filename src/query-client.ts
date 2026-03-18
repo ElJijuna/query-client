@@ -138,6 +138,57 @@ export class QueryClient {
     return new Map(this.queries.value as Map<string, QueryItem<T>>);
   }
 
+  getQueueAsArray<T = unknown>(): Array<{
+    queryKey: string[];
+    key: string;
+    createdAt: number;
+    updatedAt: number;
+    expiresAt: number;
+    timeLeftToExpire: number;
+    isStale: boolean;
+    isInvalidated: boolean;
+    staleTime: number;
+    gcTime: number;
+    status: 'fresh' | 'stale' | 'expired' | 'invalidated';
+  }> {
+    const now = Date.now();
+    const result = [];
+
+    for (const [key, queryItem] of this.queries.value.entries()) {
+      const metadata = queryItem.getMetadata();
+      const expiresAt = metadata.dataUpdatedAt + this.config.gcTime;
+      const timeLeftToExpire = Math.max(0, expiresAt - now);
+      const isStale = queryItem.isStale();
+      const isInvalidated = metadata.isInvalidated;
+
+      // Determine status
+      let status: 'fresh' | 'stale' | 'expired' | 'invalidated' = 'fresh';
+      if (isInvalidated) {
+        status = 'invalidated';
+      } else if (timeLeftToExpire === 0) {
+        status = 'expired';
+      } else if (isStale) {
+        status = 'stale';
+      }
+
+      result.push({
+        queryKey: QueryClient.parseQueryKey(key),
+        key,
+        createdAt: metadata.dataCreatedAt,
+        updatedAt: metadata.dataUpdatedAt,
+        expiresAt,
+        timeLeftToExpire,
+        isStale,
+        isInvalidated,
+        staleTime: metadata.staleTime,
+        gcTime: this.config.gcTime,
+        status,
+      });
+    }
+
+    return result;
+  }
+
   getJsonQueue<T = unknown>(): unknown {
     try {
       const queue = Object.entries(Object.fromEntries(this.getQueue<T>()))
