@@ -1,4 +1,4 @@
-import type { QueryClientConfig } from './query-client-config';
+import type { QueryClientConfig, CacheDataStrategy } from './query-client-config';
 import type { QueryFn } from './query-fn';
 
 export interface QueryItemConfig<T = unknown> extends QueryClientConfig {
@@ -25,8 +25,6 @@ export interface QueryItemMetadata {
 
 const METADATA = Symbol('query.item.metadata');
 const DATA = Symbol('query.item.data');
-
-import type { CacheDataStrategy } from './query-client-config';
 
 const protectData = <U>(value: U, strategy: CacheDataStrategy = 'clone'): U => {
   if (value === null || value === undefined || typeof value !== 'object') {
@@ -100,8 +98,9 @@ export class QueryItem<T = unknown> {
     return protectData(this[DATA], this.dataStrategy);
   }
 
-  public setDataStrategy(strategy: CacheDataStrategy): void {
+  public setDataStrategy(strategy: CacheDataStrategy): QueryItem<T> {
     this.dataStrategy = strategy;
+    return this;
   }
 
   /**
