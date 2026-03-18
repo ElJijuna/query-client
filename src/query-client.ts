@@ -60,7 +60,20 @@ export class QueryClient {
       gcTime: DEFAULT_GC_TIME,
       ignoreCache: false,
       dataStrategy: 'clone',
+      enableLogging: false,
     };
+  }
+
+  private log(message: string, data?: any): void {
+    if (this.config.enableLogging) {
+      const timestamp = new Date().toISOString();
+      console.log(`[QueryClient ${timestamp}] ${message}`, data ? data : '');
+    }
+  }
+
+  private error(message: string, error?: any): void {
+    const timestamp = new Date().toISOString();
+    console.error(`[QueryClient ERROR ${timestamp}] ${message}`, error ? error : '');
   }
 
   private startGarbageCollection(): void {
@@ -83,7 +96,9 @@ export class QueryClient {
         if (queryItem.getMetadata().timeoutId) {
           clearTimeout(queryItem.getMetadata().timeoutId);
         }
-        this.unindexKey(QueryClient.parseQueryKey(key));
+        const parsedKey = QueryClient.parseQueryKey(key);
+        this.log(`Query key expired and removed from cache: ${key}`, { queryKey: parsedKey });
+        this.unindexKey(parsedKey);
         this.queries.value.delete(key);
         hasRemovals = true;
       }
@@ -166,6 +181,7 @@ export class QueryClient {
 
     this.indexKey(queryKey);
     this.queries.value.set(key, queryItem);
+    this.log(`Query key created and cached`, { queryKey, key, staleTime, gcTime: this.config.gcTime });
   }
 
   updateQuery<T = unknown>(queryKey: string[], data: QueryItem<T>): void {
@@ -239,11 +255,17 @@ export class QueryClient {
     { queryKey }: Omit<QueryConfig<T>, 'queryFn'>,
   ): Promise<any> {
     if (!this.isStored({ queryKey })) {
-      throw new Error('No query in queries.');
+      const err = new Error('No query in queries.');
+      this.error('Failed to refetch query - not found', { queryKey, error: err });
+      throw err;
     }
 
     const storedData = this.getQueryData<T>({ queryKey });
-    if (!storedData) throw new Error('No query in queries.');
+    if (!storedData) {
+      const err = new Error('No query in queries.');
+      this.error('Failed to retrieve query data for refetch', { queryKey, error: err });
+      throw err;
+    }
 
     if (storedData.getMetadata().timeoutId) {
       clearTimeout(storedData.getMetadata().timeoutId);
@@ -261,9 +283,31 @@ export class QueryClient {
   async invalidateQueryData<T = unknown>(
     { queryKey, exact }: Omit<QueryConfig<T>, 'queryFn'>,
   ): Promise<void> {
-    const data = this.getQueryData<T>({ queryKey, exact })?.invalidate();
-    if (!data) throw new Error('No query in queries.');
-    this.updateQuery<T>(queryKey, data);
+    const data = this.getQueryData<T>({ queryKey, exact });
+    if (!data) {
+      const err = new Error('No query in queries.');
+      this.error('Failed to invalidate query - not found', { queryKey, exact, error: err });
+      throw err;
+    }
+    
+    // Invalidate the query item
+    const invalidatedData = data.invalidate();
+    
+    // Get the correct key to update based on exact flag
+    if (exact) {
+      this.updateQuery<T>(queryKey, invalidatedData);
+    } else {
+      // For partial matches, find the actual key and update it
+      const actualKey = Array.from(this.queries.value.keys()).find(k => {
+        const parsedKey = QueryClient.parseQueryKey(k);
+        return partialMatchKey(queryKey, parsedKey);
+      });
+      if (actualKey) {
+        this.updateQuery<T>(QueryClient.parseQueryKey(actualKey), invalidatedData);
+      }
+    }
+    
+    this.log(`Query invalidated - will refetch on next access`, { queryKey, exact });
   }
 
   async fetchQuery<T = unknown, E = unknown | Error>({
@@ -280,6 +324,7 @@ export class QueryClient {
     const storedData = this.getQueryData<T>({ queryKey });
 
     if (!ignoreCache && isStored && !isStale && storedData && !storedData.getMetadata().isInvalidated) {
+      this.log(`Returning cached data for query key`, { queryKey, isStale: false });
       return new QueryClientSuccessFromCacheResponse<T>(storedData);
     }
 
@@ -292,6 +337,7 @@ export class QueryClient {
 
         if (refetch) {
           this.refreshQueryData({ queryKey }, data);
+          this.log(`Query data refreshed`, { queryKey });
         } else {
           this.setQueryData({ queryKey, data, queryFn, staleTime });
         }
@@ -301,12 +347,16 @@ export class QueryClient {
           return new QueryClientSuccessResponse<T>(result);
         }
 
-        throw new Error('Failed to retrieve query data after fetch.');
+        const err = new Error('Failed to retrieve query data after fetch.');
+        this.error('Failed to retrieve data after successful fetch', { queryKey, error: err });
+        throw err;
       } catch (error) {
         attempts++;
         if (attempts > retry) {
+          this.error(`Query failed after ${attempts} attempts`, { queryKey, attempts, error });
           throw new QueryClientErrorResponse({ error });
         }
+        this.log(`Query attempt ${attempts} failed, retrying...`, { queryKey, attempts, nextRetryIn: retryDelay(attempts) });
         await waitFor(retryDelay(attempts));
       }
     }

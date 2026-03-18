@@ -17,4 +17,9 @@ export interface QueryClientConfig {
    * @default 'clone'
    */
   dataStrategy?: CacheDataStrategy;
+  /** 
+   * Enable logging for query client operations (create, invalidate, remove, expire)
+   * @default false
+   */
+  enableLogging?: boolean;
 }
