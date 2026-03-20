@@ -8,7 +8,15 @@ import type { QueryFn } from './query-fn';
 import { QueryItem, type QueryItemConfig, type QueryItemWithData } from './query-item';
 import { partialMatchKey } from './utils/utils';
 
-const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
+// Import file system utilities (only used in Node.js environment)
+let fs: any = null;
+let path: any = null;
+try {
+  fs = require('fs');
+  path = require('path');
+} catch {
+  // File system not available (browser environment)
+}const QUERY_CLIENT_INSTANCE = Symbol.for('global.query.client');
 
 export const DEFAULT_STALE_TIME = 1000 * 60;
 export const DEFAULT_RETRY = 3;
@@ -60,7 +68,140 @@ export class QueryClient {
       gcTime: DEFAULT_GC_TIME,
       ignoreCache: false,
       dataStrategy: 'clone',
+      enableLogging: false,
+      persistenceStrategy: 'memory',
+      persistencePath: this.getDefaultPersistencePath(),
     };
+
+    // Load cached data from file if file persistence is enabled
+    this.loadCacheFromFile();
+  }
+
+  private getDefaultPersistencePath(): string {
+    try {
+      return process.cwd ? process.cwd() : '.';
+    } catch {
+      return '.';
+    }
+  }
+
+  private getPersistenceFilePath(): string {
+    if (!this.config.persistencePath) {
+      this.config.persistencePath = this.getDefaultPersistencePath();
+    }
+    const fileName = 'query-cache.json';
+    if (path) {
+      return path.join(this.config.persistencePath, fileName);
+    }
+    return `${this.config.persistencePath}/${fileName}`;
+  }
+
+  private saveCacheToFile(): void {
+    if (this.config.persistenceStrategy !== 'file' || !fs || !path) {
+      return;
+    }
+
+    try {
+      const cacheData = this.serializeCacheForFile();
+      const filePath = this.getPersistenceFilePath();
+      
+      // Ensure directory exists
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+
+      fs.writeFileSync(filePath, JSON.stringify(cacheData, null, 2), 'utf-8');
+      this.log(`Cache saved to file`, { filePath });
+    } catch (error) {
+      this.error('Failed to save cache to file', error);
+    }
+  }
+
+  private loadCacheFromFile(): void {
+    if (this.config.persistenceStrategy !== 'file' || !fs) {
+      return;
+    }
+
+    try {
+      const filePath = this.getPersistenceFilePath();
+      if (!fs.existsSync(filePath)) {
+        this.log(`Cache file not found`, { filePath });
+        return;
+      }
+
+      const fileContent = fs.readFileSync(filePath, 'utf-8');
+      const cacheData = JSON.parse(fileContent);
+      this.deserializeCacheFromFile(cacheData);
+      this.log(`Cache loaded from file`, { filePath });
+    } catch (error) {
+      this.error('Failed to load cache from file', error);
+    }
+  }
+
+  private serializeCacheForFile(): any {
+    const result: any = [];
+
+    for (const [key, queryItem] of this.queries.value.entries()) {
+      try {
+        const metadata = queryItem.getMetadata();
+        result.push({
+          queryKey: QueryClient.parseQueryKey(key),
+          key,
+          data: queryItem.data,
+          metadata: {
+            dataCreatedAt: metadata.dataCreatedAt,
+            dataUpdatedAt: metadata.dataUpdatedAt,
+            staleTime: metadata.staleTime,
+            isInvalidated: metadata.isInvalidated,
+          },
+        });
+      } catch (error) {
+        this.error(`Error serializing cache entry for key ${key}`, error);
+      }
+    }
+
+    return result;
+  }
+
+  private deserializeCacheFromFile(cacheData: any): void {
+    if (!Array.isArray(cacheData)) {
+      return;
+    }
+
+    for (const entry of cacheData) {
+      try {
+        const { queryKey, data, metadata } = entry;
+        if (!queryKey || !Array.isArray(queryKey)) {
+          continue;
+        }
+
+        const now = Date.now();
+        // Check if data is not expired
+        if (metadata && (now - metadata.dataUpdatedAt) <= this.config.gcTime) {
+          this.setQueryData({
+            queryKey,
+            data,
+            queryFn: async () => data,
+            staleTime: metadata.staleTime,
+          });
+        }
+      } catch (error) {
+        this.error('Error deserializing cache entry', error);
+      }
+    }
+  }
+
+  private log(message: string, data?: any): void {
+    if (this.config.enableLogging) {
+      const timestamp = new Date().toISOString();
+      console.log(`[QueryClient ${timestamp}] ${message}`, data ? data : '');
+    }
+  }
+
+  private error(message: string, error?: any): void {
+    const timestamp = new Date().toISOString();
+    console.error(`[QueryClient ERROR ${timestamp}] ${message}`, error ? error : '');
   }
 
   private startGarbageCollection(): void {
@@ -83,7 +224,9 @@ export class QueryClient {
         if (queryItem.getMetadata().timeoutId) {
           clearTimeout(queryItem.getMetadata().timeoutId);
         }
-        this.unindexKey(QueryClient.parseQueryKey(key));
+        const parsedKey = QueryClient.parseQueryKey(key);
+        this.log(`Query key expired and removed from cache: ${key}`, { queryKey: parsedKey });
+        this.unindexKey(parsedKey);
         this.queries.value.delete(key);
         hasRemovals = true;
       }
@@ -121,6 +264,73 @@ export class QueryClient {
   getQueue<T = unknown>(): Map<string, QueryItem<T>> {
     // Return a shallow copy to avoid exposing internal Map reference
     return new Map(this.queries.value as Map<string, QueryItem<T>>);
+  }
+
+  getQueueAsArray<T = unknown>(): Array<{
+    queryKey: string[];
+    key: string;
+    createdAt: number;
+    updatedAt: number;
+    expiresAt: number;
+    timeLeftToExpire: number;
+    isStale: boolean;
+    isInvalidated: boolean;
+    staleTime: number;
+    gcTime: number;
+    status: 'fresh' | 'stale' | 'expired' | 'invalidated';
+  }> {
+    const now = Date.now();
+    const result: Array<{
+      queryKey: string[];
+      key: string;
+      createdAt: number;
+      updatedAt: number;
+      expiresAt: number;
+      timeLeftToExpire: number;
+      isStale: boolean;
+      isInvalidated: boolean;
+      staleTime: number;
+      gcTime: number;
+      status: 'fresh' | 'stale' | 'expired' | 'invalidated';
+    }> = [];
+
+    for (const [key, queryItem] of this.queries.value.entries()) {
+      try {
+        const metadata = queryItem.getMetadata();
+        const expiresAt = metadata.dataUpdatedAt + this.config.gcTime;
+        const timeLeftToExpire = Math.max(0, expiresAt - now);
+        const isStale = queryItem.isStale();
+        const isInvalidated = metadata.isInvalidated;
+
+        // Determine status
+        let status: 'fresh' | 'stale' | 'expired' | 'invalidated' = 'fresh';
+        if (isInvalidated) {
+          status = 'invalidated';
+        } else if (timeLeftToExpire === 0) {
+          status = 'expired';
+        } else if (isStale) {
+          status = 'stale';
+        }
+
+        result.push({
+          queryKey: QueryClient.parseQueryKey(key),
+          key,
+          createdAt: metadata.dataCreatedAt,
+          updatedAt: metadata.dataUpdatedAt,
+          expiresAt,
+          timeLeftToExpire,
+          isStale,
+          isInvalidated,
+          staleTime: metadata.staleTime,
+          gcTime: this.config.gcTime,
+          status,
+        });
+      } catch (error) {
+        this.error(`Error building queue array entry for key ${key}`, error);
+      }
+    }
+
+    return result;
   }
 
   getJsonQueue<T = unknown>(): unknown {
@@ -166,6 +376,10 @@ export class QueryClient {
 
     this.indexKey(queryKey);
     this.queries.value.set(key, queryItem);
+    this.log(`Query key created and cached`, { queryKey, key, staleTime, gcTime: this.config.gcTime });
+    
+    // Auto-save to file if file persistence is enabled
+    this.saveCacheToFile();
   }
 
   updateQuery<T = unknown>(queryKey: string[], data: QueryItem<T>): void {
@@ -182,6 +396,10 @@ export class QueryClient {
 
     if (data) {
       this.queries.value.set(key, data.updateData(newData));
+      this.log(`Query data refreshed`, { queryKey, key, newDataUpdatedAt: Date.now() });
+      
+      // Auto-save to file if file persistence is enabled
+      this.saveCacheToFile();
     }
   }
 
@@ -204,26 +422,34 @@ export class QueryClient {
     return undefined;
   }
 
+  private clearQueryTimeout(queryItem: QueryItem | undefined): void {
+    if (queryItem?.getMetadata().timeoutId) {
+      clearTimeout(queryItem.getMetadata().timeoutId);
+    }
+  }
+
   removeQueries<T = unknown>({ queryKey }: Pick<QueryConfig<T>, 'queryKey'>) {
     const prefix = QueryClient.getQueryKey(queryKey);
     const matchingKeys = Array.from(this.keyIndex.get(prefix) ?? []);
 
     if (matchingKeys.length === 0 && this.queries.value.has(prefix)) {
       // If no indexed matches but exact key exists, remove it
+      const item = this.queries.value.get(prefix);
+      this.clearQueryTimeout(item);
       this.unindexKey(queryKey);
       this.queries.value.delete(prefix);
       this.queries.value = new Map(this.queries.value);
+      this.log(`Query key removed from cache`, { queryKey, key: prefix });
       return;
     }
 
     let removed = false;
     for (const key of matchingKeys) {
       const item = this.queries.value.get(key);
-      if (item?.getMetadata().timeoutId) {
-        clearTimeout(item.getMetadata().timeoutId);
-      }
+      this.clearQueryTimeout(item);
       this.unindexKey(QueryClient.parseQueryKey(key));
       this.queries.value.delete(key);
+      this.log(`Query key removed from cache`, { queryKey: QueryClient.parseQueryKey(key), key });
       removed = true;
     }
 
@@ -239,11 +465,17 @@ export class QueryClient {
     { queryKey }: Omit<QueryConfig<T>, 'queryFn'>,
   ): Promise<any> {
     if (!this.isStored({ queryKey })) {
-      throw new Error('No query in queries.');
+      const err = new Error('No query in queries.');
+      this.error('Failed to refetch query - not found', { queryKey, error: err });
+      throw err;
     }
 
     const storedData = this.getQueryData<T>({ queryKey });
-    if (!storedData) throw new Error('No query in queries.');
+    if (!storedData) {
+      const err = new Error('No query in queries.');
+      this.error('Failed to retrieve query data for refetch', { queryKey, error: err });
+      throw err;
+    }
 
     if (storedData.getMetadata().timeoutId) {
       clearTimeout(storedData.getMetadata().timeoutId);
@@ -261,9 +493,31 @@ export class QueryClient {
   async invalidateQueryData<T = unknown>(
     { queryKey, exact }: Omit<QueryConfig<T>, 'queryFn'>,
   ): Promise<void> {
-    const data = this.getQueryData<T>({ queryKey, exact })?.invalidate();
-    if (!data) throw new Error('No query in queries.');
-    this.updateQuery<T>(queryKey, data);
+    const data = this.getQueryData<T>({ queryKey, exact });
+    if (!data) {
+      const err = new Error('No query in queries.');
+      this.error('Failed to invalidate query - not found', { queryKey, exact, error: err });
+      throw err;
+    }
+    
+    // Invalidate the query item
+    const invalidatedData = data.invalidate();
+    
+    // Get the correct key to update based on exact flag
+    if (exact) {
+      this.updateQuery<T>(queryKey, invalidatedData);
+    } else {
+      // For partial matches, find the actual key and update it
+      const actualKey = Array.from(this.queries.value.keys()).find(k => {
+        const parsedKey = QueryClient.parseQueryKey(k);
+        return partialMatchKey(queryKey, parsedKey);
+      });
+      if (actualKey) {
+        this.updateQuery<T>(QueryClient.parseQueryKey(actualKey), invalidatedData);
+      }
+    }
+    
+    this.log(`Query invalidated - will refetch on next access`, { queryKey, exact });
   }
 
   async fetchQuery<T = unknown, E = unknown | Error>({
@@ -280,6 +534,7 @@ export class QueryClient {
     const storedData = this.getQueryData<T>({ queryKey });
 
     if (!ignoreCache && isStored && !isStale && storedData && !storedData.getMetadata().isInvalidated) {
+      this.log(`Returning cached data for query key`, { queryKey, isStale: false });
       return new QueryClientSuccessFromCacheResponse<T>(storedData);
     }
 
@@ -292,6 +547,7 @@ export class QueryClient {
 
         if (refetch) {
           this.refreshQueryData({ queryKey }, data);
+          this.log(`Query data refreshed`, { queryKey });
         } else {
           this.setQueryData({ queryKey, data, queryFn, staleTime });
         }
@@ -301,12 +557,16 @@ export class QueryClient {
           return new QueryClientSuccessResponse<T>(result);
         }
 
-        throw new Error('Failed to retrieve query data after fetch.');
+        const err = new Error('Failed to retrieve query data after fetch.');
+        this.error('Failed to retrieve data after successful fetch', { queryKey, error: err });
+        throw err;
       } catch (error) {
         attempts++;
         if (attempts > retry) {
+          this.error(`Query failed after ${attempts} attempts`, { queryKey, attempts, error });
           throw new QueryClientErrorResponse({ error });
         }
+        this.log(`Query attempt ${attempts} failed, retrying...`, { queryKey, attempts, nextRetryIn: retryDelay(attempts) });
         await waitFor(retryDelay(attempts));
       }
     }
