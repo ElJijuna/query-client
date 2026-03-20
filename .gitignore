@@ -11,6 +11,14 @@ lib
 coverage
 *.lcov
 
+# documentation
+docs
+!.nojekyll
+
+# test reports
+test-report.json
+junit.xml
+
 # logs
 logs
 _.log

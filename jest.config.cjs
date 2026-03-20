@@ -9,9 +9,22 @@ module.exports = {
   moduleNameMapper: {
     '^ssignal$': '<rootDir>/node_modules/ssignal/lib/ssignal.cjs.js',
   },
-  coverageReporters: ['clover', 'json', 'lcov'],
+  coverageReporters: ['clover', 'json', 'lcov', 'text', 'text-summary'],
   reporters: [
-    'default'
+    'default',
+    ['jest-junit', {
+      outputDirectory: './',
+      outputName: 'junit.xml',
+      classNameTemplate: '{classname}',
+      titleTemplate: '{title}',
+      ancestorSeparator: ' › ',
+      usePathAsClassName: true,
+    }]
+  ],
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/**/*.test.ts',
   ],
   coverageThreshold: {
     global: {

@@ -1,0 +1,18 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs",
+  "theme": "default",
+  "categorizeByGroup": true,
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeInternal": true,
+  "excludeExternals": false,
+  "readme": "README.md",
+  "githubPages": false,
+  "includeVersion": true,
+  "disableSources": false,
+  "searchInComments": true,
+  "cleanOutputDir": true,
+  "logLevel": "Info",
+  "json": "docs/api-docs.json"
+}
