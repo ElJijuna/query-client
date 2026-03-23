@@ -1,5 +1,6 @@
 import { QueryClient } from './query-client';
 import { QueryClientErrorResponse, QueryClientSuccessFromCacheResponse, QueryClientSuccessResponse } from './query-client-response';
+import { QueryItem } from './query-item';
 
 jest.mock('ssignal', () => {
   let subscribers: Function[] = [];
@@ -39,6 +40,7 @@ describe('QueryClient Singleton', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
     (QueryClient as any).instance = undefined;
     queryClient = QueryClient.getInstance();
     queryClient.clear();
@@ -48,6 +50,7 @@ describe('QueryClient Singleton', () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     queryClient.destroy();
     jest.useRealTimers();
   });
@@ -447,6 +450,382 @@ describe('QueryClient Singleton', () => {
       expect(queryClient.getQueue().has(QueryClient.getQueryKey(queryKey))).toBe(false);
 
       jest.useRealTimers();
+    });
+  });
+
+  describe('getQueryData with exact option', () => {
+    it('should return data when exact: true matches the key', async () => {
+      const queryKey = ['exact-test'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const result = queryClient.getQueryData({ queryKey, exact: true });
+      expect(result?.data).toBe('data');
+    });
+
+    it('should return undefined when exact: true and key does not exist', async () => {
+      const queryKey = ['exact-test'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const result = queryClient.getQueryData({ queryKey: ['nonexistent'], exact: true });
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('getQueueAsArray', () => {
+    it('should return empty array when no queries cached', () => {
+      expect(queryClient.getQueueAsArray()).toHaveLength(0);
+    });
+
+    it('should return fresh status for non-stale query', async () => {
+      const queryKey = ['fresh-queue'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 10000 });
+
+      const queue = queryClient.getQueueAsArray();
+      expect(queue).toHaveLength(1);
+      const item = queue[0]!;
+      expect(item.status).toBe('fresh');
+      expect(item.isStale).toBe(false);
+      expect(item.isInvalidated).toBe(false);
+      expect(item.key).toBe('fresh-queue');
+      expect(item.queryKey).toEqual(['fresh-queue']);
+      expect(item.staleTime).toBe(10000);
+      expect(item.gcTime).toBeGreaterThan(0);
+      expect(item.createdAt).toBeDefined();
+      expect(item.updatedAt).toBeDefined();
+      expect(item.expiresAt).toBeGreaterThan(Date.now());
+      expect(item.timeLeftToExpire).toBeGreaterThan(0);
+    });
+
+    it('should return stale status after staleTime has passed', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['stale-queue'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 100 });
+
+      jest.advanceTimersByTime(200);
+
+      const queue = queryClient.getQueueAsArray();
+      const item = queue[0]!;
+      expect(item.status).toBe('stale');
+      expect(item.isStale).toBe(true);
+    });
+
+    it('should return invalidated status for invalidated query', async () => {
+      const queryKey = ['invalidated-queue'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 10000 });
+
+      await queryClient.invalidateQueryData({ queryKey });
+
+      const queue = queryClient.getQueueAsArray();
+      const item = queue[0]!;
+      expect(item.status).toBe('invalidated');
+      expect(item.isInvalidated).toBe(true);
+    });
+
+    it('should return expired status when gcTime has elapsed', async () => {
+      const queryKey = ['expired-queue'];
+      const gcTime = 5000;
+      queryClient.setConfig({ gcTime });
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 0 });
+
+      const cachedItem = queryClient.getQueryData({ queryKey, exact: true });
+      if (cachedItem) {
+        clearTimeout(cachedItem.getMetadata().timeoutId);
+        cachedItem.getMetadata().timeoutId = undefined;
+        // Backdate the item so it appears expired
+        cachedItem.getMetadata().dataUpdatedAt = Date.now() - gcTime - 1;
+      }
+
+      const queue = queryClient.getQueueAsArray();
+      const item = queue[0]!;
+      expect(item.status).toBe('expired');
+      expect(item.timeLeftToExpire).toBe(0);
+    });
+  });
+
+  describe('getJsonQueue', () => {
+    it('should return empty array when no queries', () => {
+      const json = queryClient.getJsonQueue();
+      expect(Array.isArray(json)).toBe(true);
+      expect((json as any[]).length).toBe(0);
+    });
+
+    it('should return JSON-serializable representation of cached queries', async () => {
+      const queryKey = ['json-queue'];
+      mockQueryFn.mockResolvedValueOnce({ value: 42 });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      const json = queryClient.getJsonQueue() as any[];
+      expect(Array.isArray(json)).toBe(true);
+      expect(json.length).toBe(1);
+      expect(json[0].queryKey).toBe('json-queue');
+      expect(json[0].queryKeyOriginal).toEqual(['json-queue']);
+      expect(json[0].data).toEqual({ value: 42 });
+    });
+  });
+
+  describe('setQueryData direct usage', () => {
+    it('should set query data directly without fetching', () => {
+      const queryKey = ['direct-set'];
+      const queryFn = jest.fn().mockResolvedValue('data');
+      queryClient.setQueryData({ queryKey, data: 'manual data', queryFn, staleTime: 5000 });
+
+      const result = queryClient.getQueryData({ queryKey });
+      expect(result?.data).toBe('manual data');
+    });
+  });
+
+  describe('invalidateQueryData edge cases', () => {
+    it('should throw when key does not exist', async () => {
+      await expect(
+        queryClient.invalidateQueryData({ queryKey: ['nonexistent-invalidate'] })
+      ).rejects.toThrow('No query in queries.');
+    });
+
+    it('should invalidate with exact: true', async () => {
+      const queryKey = ['exact-invalidate'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey, staleTime: 10000 });
+
+      await queryClient.invalidateQueryData({ queryKey, exact: true });
+
+      const item = queryClient.getQueryData({ queryKey });
+      expect(item?.getMetadata().isInvalidated).toBe(true);
+    });
+  });
+
+  describe('removeQueries via updateQuery (exact path)', () => {
+    it('should remove a query added directly via updateQuery', () => {
+      const queryKey = ['unindexed-key'];
+      const queryFn = jest.fn().mockResolvedValue('data');
+      const queryItem = new QueryItem('direct data', { queryFn });
+
+      // updateQuery bypasses key indexing
+      queryClient.updateQuery(queryKey, queryItem);
+      expect(queryClient.getQueryData({ queryKey, exact: true })).toBeDefined();
+
+      queryClient.removeQueries({ queryKey });
+      expect(queryClient.getQueryData({ queryKey, exact: true })).toBeUndefined();
+    });
+  });
+
+  describe('Logging behavior', () => {
+    it('should call console.log when enableLogging is true', async () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      queryClient.setConfig({ enableLogging: true });
+
+      const queryKey = ['log-test'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      expect(logSpy).toHaveBeenCalled();
+    });
+
+    it('should not call console.log when enableLogging is false', async () => {
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      queryClient.setConfig({ enableLogging: false });
+
+      const queryKey = ['no-log-test'];
+      mockQueryFn.mockResolvedValueOnce('data');
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Default retryDelay (exponential backoff)', () => {
+    it('default retryDelay function computes exponential backoff', () => {
+      const retryDelay = (queryClient as any).config.retryDelay as (attempt: number) => number;
+      expect(retryDelay(0)).toBe(1000);        // min(1000 * 2^0, 30000) = 1000
+      expect(retryDelay(1)).toBe(2000);        // min(1000 * 2^1, 30000) = 2000
+      expect(retryDelay(2)).toBe(4000);        // min(1000 * 2^2, 30000) = 4000
+      expect(retryDelay(10)).toBe(30000);      // capped at 30000
+    });
+
+    it('should retry using default exponential backoff when retryDelay is not overridden', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['default-delay-query'];
+
+      // Only override retry count, not retryDelay — default exponential backoff remains
+      queryClient.setConfig({ retry: 1 });
+
+      mockQueryFn.mockRejectedValueOnce(new Error('Transient error'));
+      mockQueryFn.mockResolvedValueOnce('success after retry');
+
+      const promise = queryClient.fetchQuery({ queryKey, queryFn: mockQueryFn });
+
+      // Flush rejection + waitFor setup, advance past retryDelay(1)=2000ms, flush resolution
+      for (let i = 0; i < 4; i++) {
+        await Promise.resolve();
+        jest.advanceTimersByTime(701);
+      }
+
+      await expect(promise).resolves.toBeInstanceOf(QueryClientSuccessResponse);
+    });
+  });
+
+  describe('Garbage Collection interval', () => {
+    it('should remove expired items when GC interval fires', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['gc-interval-test'];
+      const queryFn = jest.fn().mockResolvedValue('data');
+
+      queryClient.setConfig({ gcTime: 100 });
+      queryClient.setQueryData({ queryKey, data: 'data', queryFn, staleTime: 0 });
+
+      // Clear individual timeout so only GC interval removes the item
+      const item = queryClient.getQueryData({ queryKey, exact: true });
+      if (item) {
+        clearTimeout(item.getMetadata().timeoutId);
+        item.getMetadata().timeoutId = undefined;
+        // Backdate so item appears past gcTime=100
+        item.getMetadata().dataUpdatedAt = Date.now() - 200;
+      }
+
+      expect(queryClient.getStoreSize()).toBe(1);
+
+      // GC interval was started by clear() in beforeEach with gcTime=5000
+      jest.advanceTimersByTime(5001);
+
+      expect(queryClient.getStoreSize()).toBe(0);
+    });
+
+    it('should not remove items that are still fresh when GC runs', async () => {
+      jest.useFakeTimers();
+      const queryKey = ['gc-fresh-test'];
+      const queryFn = jest.fn().mockResolvedValue('data');
+
+      queryClient.setConfig({ gcTime: 5000 });
+      queryClient.setQueryData({ queryKey, data: 'data', queryFn, staleTime: 10000 });
+
+      // Clear individual timeout to isolate GC interval behavior
+      const item = queryClient.getQueryData({ queryKey, exact: true });
+      if (item) {
+        clearTimeout(item.getMetadata().timeoutId);
+        item.getMetadata().timeoutId = undefined;
+      }
+
+      expect(queryClient.getStoreSize()).toBe(1);
+
+      // Advance less than gcTime — item should survive GC
+      jest.advanceTimersByTime(3000);
+
+      expect(queryClient.getStoreSize()).toBe(1);
+    });
+  });
+
+  describe('File persistence', () => {
+    const os = require('os');
+    const fsModule = require('fs');
+    const pathModule = require('path');
+    const tempDir = pathModule.join(os.tmpdir(), 'query-client-test-' + Date.now());
+    const cacheFile = pathModule.join(tempDir, 'query-cache.json');
+
+    beforeAll(() => {
+      fsModule.mkdirSync(tempDir, { recursive: true });
+    });
+
+    afterAll(() => {
+      try { fsModule.unlinkSync(cacheFile); } catch {}
+      try { fsModule.rmdirSync(tempDir); } catch {}
+    });
+
+    it('should save cache to file when persistenceStrategy is file', async () => {
+      queryClient.setConfig({ persistenceStrategy: 'file', persistencePath: tempDir });
+
+      const queryKey = ['file-persistence-test'];
+      mockQueryFn.mockResolvedValueOnce({ id: 1, name: 'test' });
+      await queryClient.fetchQuery({ queryFn: mockQueryFn, queryKey });
+
+      expect(fsModule.existsSync(cacheFile)).toBe(true);
+
+      const content = JSON.parse(fsModule.readFileSync(cacheFile, 'utf-8'));
+      expect(Array.isArray(content)).toBe(true);
+      expect(content.length).toBeGreaterThan(0);
+      expect(content[0].data).toEqual({ id: 1, name: 'test' });
+
+      // Restore memory strategy for other tests
+      queryClient.setConfig({ persistenceStrategy: 'memory' });
+    });
+
+    it('should load cache from file via loadCacheFromFile', () => {
+      // Write a known cache file
+      const cacheData = [{
+        queryKey: ['loaded-key'],
+        key: 'loaded-key',
+        data: 'loaded value',
+        metadata: {
+          dataCreatedAt: Date.now(),
+          dataUpdatedAt: Date.now(),
+          staleTime: 10000,
+          isInvalidated: false,
+        },
+      }];
+      fsModule.writeFileSync(cacheFile, JSON.stringify(cacheData), 'utf-8');
+
+      queryClient.setConfig({ persistenceStrategy: 'file', persistencePath: tempDir });
+
+      // Call private method directly to test loading
+      (queryClient as any).loadCacheFromFile();
+
+      const item = queryClient.getQueryData({ queryKey: ['loaded-key'] });
+      expect(item?.data).toBe('loaded value');
+
+      queryClient.setConfig({ persistenceStrategy: 'memory' });
+    });
+
+    it('should skip loading when cache file does not exist', () => {
+      const nonExistentDir = pathModule.join(os.tmpdir(), 'nonexistent-' + Date.now());
+      queryClient.setConfig({ persistenceStrategy: 'file', persistencePath: nonExistentDir });
+
+      // Should not throw even if file doesn't exist
+      expect(() => (queryClient as any).loadCacheFromFile()).not.toThrow();
+
+      queryClient.setConfig({ persistenceStrategy: 'memory' });
+    });
+
+    it('should skip expired entries when loading from file', () => {
+      const expiredCacheData = [{
+        queryKey: ['expired-loaded-key'],
+        key: 'expired-loaded-key',
+        data: 'stale value',
+        metadata: {
+          dataCreatedAt: Date.now() - 100000,
+          dataUpdatedAt: Date.now() - 100000, // far in the past
+          staleTime: 1000,
+          isInvalidated: false,
+        },
+      }];
+      fsModule.writeFileSync(cacheFile, JSON.stringify(expiredCacheData), 'utf-8');
+
+      queryClient.setConfig({ persistenceStrategy: 'file', persistencePath: tempDir, gcTime: 5000 });
+      (queryClient as any).loadCacheFromFile();
+
+      // Item should not be loaded since it's expired
+      const item = queryClient.getQueryData({ queryKey: ['expired-loaded-key'] });
+      expect(item).toBeUndefined();
+
+      queryClient.setConfig({ persistenceStrategy: 'memory' });
+    });
+  });
+
+  describe('Static utility methods', () => {
+    it('getQueryKey joins array with colon', () => {
+      expect(QueryClient.getQueryKey(['users', '1', 'posts'])).toBe('users:1:posts');
+    });
+
+    it('parseQueryKey splits string by colon', () => {
+      expect(QueryClient.parseQueryKey('users:1:posts')).toEqual(['users', '1', 'posts']);
+    });
+
+    it('getQueryKey and parseQueryKey are inverse operations', () => {
+      const original = ['users', '42', 'profile'];
+      expect(QueryClient.parseQueryKey(QueryClient.getQueryKey(original))).toEqual(original);
     });
   });
 });
