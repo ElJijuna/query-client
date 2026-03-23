@@ -640,11 +640,14 @@ describe('QueryClient Singleton', () => {
 
   describe('Default retryDelay (exponential backoff)', () => {
     it('default retryDelay function computes exponential backoff', () => {
-      const retryDelay = (queryClient as any).config.retryDelay as (attempt: number) => number;
+      // Use a fresh instance to access unmodified default config (not polluted by other tests)
+      const freshClient = new QueryClient();
+      const retryDelay = (freshClient as any).config.retryDelay as (attempt: number) => number;
       expect(retryDelay(0)).toBe(1000);        // min(1000 * 2^0, 30000) = 1000
       expect(retryDelay(1)).toBe(2000);        // min(1000 * 2^1, 30000) = 2000
       expect(retryDelay(2)).toBe(4000);        // min(1000 * 2^2, 30000) = 4000
       expect(retryDelay(10)).toBe(30000);      // capped at 30000
+      freshClient.destroy();
     });
 
     it('should retry using default exponential backoff when retryDelay is not overridden', async () => {
@@ -671,14 +674,17 @@ describe('QueryClient Singleton', () => {
 
   describe('Garbage Collection interval', () => {
     it('should remove expired items when GC interval fires', async () => {
+      // Must call useFakeTimers BEFORE clear() so setInterval is captured by fake timers
       jest.useFakeTimers();
-      const queryKey = ['gc-interval-test'];
-      const queryFn = jest.fn().mockResolvedValue('data');
 
       queryClient.setConfig({ gcTime: 100 });
+      queryClient.clear(); // Re-initializes GC interval under fake timers
+
+      const queryKey = ['gc-interval-test'];
+      const queryFn = jest.fn().mockResolvedValue('data');
       queryClient.setQueryData({ queryKey, data: 'data', queryFn, staleTime: 0 });
 
-      // Clear individual timeout so only GC interval removes the item
+      // Clear individual timeout so only the GC interval removes the item
       const item = queryClient.getQueryData({ queryKey, exact: true });
       if (item) {
         clearTimeout(item.getMetadata().timeoutId);
@@ -689,8 +695,8 @@ describe('QueryClient Singleton', () => {
 
       expect(queryClient.getStoreSize()).toBe(1);
 
-      // GC interval was started by clear() in beforeEach with gcTime=5000
-      jest.advanceTimersByTime(5001);
+      // Advance past the GC interval (gcTime=100ms)
+      jest.advanceTimersByTime(101);
 
       expect(queryClient.getStoreSize()).toBe(0);
     });
