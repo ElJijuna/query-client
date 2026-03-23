@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/ElJijuna/query-client/compare/v1.3.0...v1.4.0) (2026-03-23)
+
+
+### Features
+
+* add automated npm publishing with semantic-release ([c20b813](https://github.com/ElJijuna/query-client/commit/c20b813d96e9120d8657efc49b90da4bb653fa15))
+
 ## [1.2.1](https://github.com/ElJijuna/query-client/compare/v1.2.0...v1.2.1) (2026-03-23)
 
 
