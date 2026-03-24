@@ -11,7 +11,7 @@ export class QueryClientBaseResponse<T = unknown, E = null | Error> {
 
 export class QueryClientSuccessResponse<T = unknown> extends QueryClientBaseResponse<T, null> {
   constructor(params: Omit<QueryClientBaseResponse<T, null>, 'error' | 'isError' | 'isPending' | 'isCached' | 'isSuccess'>) {
-    super(params.data, false, true, true, false, null);
+    super(params.data, false, false, true, false, null);
   }
 }
 

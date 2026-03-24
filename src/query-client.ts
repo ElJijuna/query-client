@@ -73,8 +73,6 @@ export class QueryClient {
       persistencePath: this.getDefaultPersistencePath(),
     };
 
-    // Load cached data from file if file persistence is enabled
-    this.loadCacheFromFile();
   }
 
   private getDefaultPersistencePath(): string {
@@ -354,7 +352,11 @@ export class QueryClient {
   }
 
   setConfig(config: Omit<QueryItemConfig, 'queryKey' | 'data' | 'queryFn'>): QueryClient {
+    const prevStrategy = this.config.persistenceStrategy;
     this.config = { ...this.config, ...config };
+    if (config.persistenceStrategy === 'file' && prevStrategy !== 'file') {
+      this.loadCacheFromFile();
+    }
     return this;
   }
 
