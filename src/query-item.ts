@@ -118,6 +118,7 @@ export class QueryItem<T = unknown> {
   public updateData(data: T): QueryItem<T> {
     this[DATA] = data;
     this.getMetadata().dataUpdatedAt = Date.now();
+    this.getMetadata().isInvalidated = false;
     return this;
   }
 

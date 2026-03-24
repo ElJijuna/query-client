@@ -62,9 +62,11 @@ jobs:
                 });
               }
               if (file.b) {
-                Object.values(file.b).forEach(v => {
-                  totalBranches++;
-                  if (v > 0) coveredBranches++;
+                Object.values(file.b).forEach(branch => {
+                  branch.forEach(v => {
+                    totalBranches++;
+                    if (v > 0) coveredBranches++;
+                  });
                 });
               }
               if (file.f) {
